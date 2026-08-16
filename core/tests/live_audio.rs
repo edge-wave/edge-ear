@@ -273,3 +273,44 @@ fn a_real_device_can_be_chosen_by_its_identifier() {
     ear.read(Some(Duration::from_secs(2))).expect("live audio");
     ear.stop().unwrap();
 }
+
+/// Real machines list several devices under one name. Each must still
+/// be reachable on its own.
+#[test]
+#[ignore]
+fn devices_sharing_a_name_can_still_be_told_apart() {
+    let ear = EdgeEar::new().expect("handle");
+    let devices = ear.input_devices().expect("input devices");
+
+    let mut ids: Vec<&str> = devices.iter().map(|d| d.id.as_str()).collect();
+    ids.sort_unstable();
+    let unique = ids.len();
+    ids.dedup();
+    assert_eq!(ids.len(), unique, "identifiers must not repeat");
+
+    let mut names: Vec<&str> = devices.iter().map(|d| d.name.as_str()).collect();
+    names.sort_unstable();
+    let before = names.len();
+    names.dedup();
+    println!(
+        "{before} devices, {} distinct names, {unique} distinct identifiers",
+        names.len()
+    );
+
+    let defaults = devices.iter().filter(|d| d.is_default).count();
+    assert_eq!(defaults, 1, "exactly one device is the default");
+}
+
+/// An identifier stored on an earlier run may name a device that has
+/// since been unplugged. That is a missing device, not a crash.
+#[test]
+#[ignore]
+fn an_identifier_for_a_device_that_is_gone_says_so() {
+    let ear = EdgeEar::new().expect("handle");
+    ear.set_input_device(Some("alsa:hw:CARD=NoSuchDeviceEverPluggedIn,DEV=9"))
+        .unwrap();
+
+    let err = ear.start().expect_err("must fail");
+    assert!(matches!(err, Error::NoDevice(_)), "{err}");
+    assert!(!ear.is_running());
+}
