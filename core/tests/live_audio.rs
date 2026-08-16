@@ -221,3 +221,55 @@ fn many_readers_from_many_threads_do_not_trip_over_each_other() {
 
     ear.stop().unwrap();
 }
+
+/// Needs a real machine with a microphone, so it is not part of the
+/// normal run. This is the only place the whole path is exercised
+/// against hardware rather than the fake backend.
+#[test]
+#[ignore]
+fn live_audio_works_against_a_real_microphone() {
+    let ear = EdgeEar::new().expect("a handle over the real devices");
+
+    let devices = ear.input_devices().expect("input devices");
+    assert!(!devices.is_empty(), "expected at least one microphone");
+    let default = devices.iter().find(|d| d.is_default);
+    println!("default input: {default:?}");
+    assert!(
+        default.is_some(),
+        "one device must be marked as the default"
+    );
+
+    ear.set_format(Target::Read, AudioFormat::mono_16k())
+        .unwrap();
+    ear.start().expect("start capture");
+
+    let mut samples = 0usize;
+    for _ in 0..20 {
+        let chunk = ear.read(Some(Duration::from_secs(2))).expect("live audio");
+        assert_eq!(chunk.format, AudioFormat::mono_16k());
+        assert_eq!(chunk.dropped_before, 0, "a reader keeping up loses nothing");
+        samples += chunk.samples.len();
+    }
+
+    println!("read {samples} samples from the real microphone");
+    assert!(samples > 0);
+    ear.stop().unwrap();
+}
+
+/// Every listed device must be selectable by the identifier it was
+/// listed under. Names repeat, so they cannot carry this on their own.
+#[test]
+#[ignore]
+fn a_real_device_can_be_chosen_by_its_identifier() {
+    let ear = EdgeEar::new().expect("handle");
+    let devices = ear.input_devices().expect("input devices");
+    let default = devices
+        .iter()
+        .find(|d| d.is_default)
+        .expect("a default device");
+
+    ear.set_input_device(Some(&default.id)).unwrap();
+    ear.start().expect("start on the named device");
+    ear.read(Some(Duration::from_secs(2))).expect("live audio");
+    ear.stop().unwrap();
+}
