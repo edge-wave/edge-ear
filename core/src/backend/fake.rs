@@ -24,6 +24,9 @@ pub struct FakeSetup {
     /// paths can be tested.
     pub input_error: Option<FakeFailure>,
     pub output_error: Option<FakeFailure>,
+    /// A device that is open but hands over nothing. Lets a test check
+    /// what a reader does while it waits.
+    pub starve: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +100,13 @@ impl FakeBackend {
         backend
     }
 
+    /// A microphone that opens but never produces audio.
+    pub fn starving() -> Self {
+        let mut backend = Self::silent();
+        backend.setup.starve = true;
+        backend
+    }
+
     pub fn failing_output(failure: FakeFailure) -> Self {
         let mut backend = Self::silent();
         backend.setup.output_error = Some(failure);
@@ -110,6 +120,7 @@ struct FakeInput {
     block: usize,
     format: AudioFormat,
     stopped: bool,
+    starve: bool,
 }
 
 impl InputStream for FakeInput {
@@ -120,6 +131,13 @@ impl InputStream for FakeInput {
     fn read(&mut self) -> Result<Samples> {
         if self.stopped {
             return Err(Error::Stopped);
+        }
+        if self.starve {
+            // Nothing to hand over. Return an empty block after a short
+            // pause, so the capture loop keeps checking whether it has
+            // been told to stop instead of parking for ever.
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            return Ok(Samples::I16(Vec::new()));
         }
         let end = (self.cursor + self.block).min(self.audio.len());
         let mut block: Vec<i16> = self.audio[self.cursor.min(end)..end].to_vec();
@@ -174,6 +192,7 @@ impl AudioBackend for FakeBackend {
             block: self.setup.block_samples.max(1),
             format: self.setup.input_format.unwrap_or(AudioFormat::mono_16k()),
             stopped: false,
+            starve: self.setup.starve,
         }))
     }
 
