@@ -12,9 +12,10 @@ pub mod events;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use backend::{AudioBackend, DeviceInfo, fake::FakeBackend};
-use capture::AudioChunk;
-use capture::ring::Ring;
+use std::time::Duration;
+
+use backend::{AudioBackend, DeviceInfo, FormatRequest, fake::FakeBackend};
+use capture::{AudioChunk, CaptureThread, Consumer, ConsumerKind};
 use config::{AudioFormat, Config, Target};
 use error::{Error, Result};
 use events::Event;
@@ -34,15 +35,22 @@ pub enum HandleState {
 struct Inner {
     state: HandleState,
     config: Config,
+    capture: Option<CaptureThread>,
+    /// Live only while capturing. Rebuilt on every start, because the
+    /// conversion pipeline is fixed when the thread comes up.
+    consumers: Vec<Consumer>,
+}
+
+impl Inner {
+    fn consumer(&self, kind: ConsumerKind) -> Option<&Consumer> {
+        self.consumers.iter().find(|c| c.kind == kind)
+    }
 }
 
 /// One running instance. Owns one microphone and one speaker.
 pub struct EdgeEar {
     inner: Mutex<Inner>,
-    dispatcher: Dispatcher,
-    /// The application's own view of live audio. Always present, so it
-    /// works whether or not any detector is switched on.
-    read_ring: Arc<Ring<AudioChunk>>,
+    dispatcher: Arc<Dispatcher>,
     backend: Mutex<Box<dyn AudioBackend>>,
 }
 
@@ -64,9 +72,10 @@ impl EdgeEar {
             inner: Mutex::new(Inner {
                 state: HandleState::Created,
                 config,
+                capture: None,
+                consumers: Vec::new(),
             }),
-            dispatcher: Dispatcher::new(DEFAULT_QUEUE_CAPACITY),
-            read_ring: Arc::new(Ring::new(64)),
+            dispatcher: Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY)),
             backend: Mutex::new(backend),
         })
     }
@@ -76,15 +85,26 @@ impl EdgeEar {
     pub fn start(&self) -> Result<()> {
         let mut inner = self.lock();
         match inner.state {
-            HandleState::Destroyed => Err(Error::Destroyed),
-            HandleState::Running => Err(Error::AlreadyRunning),
-            HandleState::Created => {
-                inner.config.validate()?;
-                inner.state = HandleState::Running;
-                self.read_ring.reopen();
-                Ok(())
-            }
+            HandleState::Destroyed => return Err(Error::Destroyed),
+            HandleState::Running => return Err(Error::AlreadyRunning),
+            HandleState::Created => {}
         }
+        inner.config.validate()?;
+
+        let request = FormatRequest {
+            device: inner.config.fixed.input_device.clone(),
+            preferred: inner.config.fixed.read_format,
+        };
+        let stream = self.backend_lock().open_input(&request)?;
+
+        let consumers = build_consumers(&inner.config);
+        let capture =
+            CaptureThread::start(stream, consumers.clone(), Arc::clone(&self.dispatcher))?;
+
+        inner.consumers = consumers;
+        inner.capture = Some(capture);
+        inner.state = HandleState::Running;
+        Ok(())
     }
 
     pub fn stop(&self) -> Result<()> {
@@ -94,13 +114,43 @@ impl EdgeEar {
             HandleState::Created => Err(Error::NotRunning),
             HandleState::Running => {
                 inner.state = HandleState::Created;
-                drop(inner);
-                // Release anyone waiting on a read, rather than leaving
-                // them blocked until the process ends.
-                self.read_ring.close();
+                // Stopping closes every ring, which releases anyone
+                // waiting on a read rather than leaving them blocked.
+                if let Some(mut capture) = inner.capture.take() {
+                    capture.stop();
+                }
+                inner.consumers.clear();
                 Ok(())
             }
         }
+    }
+
+    // ── reading live audio ───────────────────────────────────────────
+
+    /// Take the next block of live audio.
+    ///
+    /// Works between `start` and `stop` whether or not any detector is
+    /// switched on. `None` waits until audio arrives or capture stops.
+    pub fn read(&self, timeout: Option<Duration>) -> Result<AudioChunk> {
+        let ring = {
+            let inner = self.lock();
+            match inner.state {
+                HandleState::Destroyed => return Err(Error::Destroyed),
+                HandleState::Created => return Err(Error::NotRunning),
+                HandleState::Running => {}
+            }
+            let consumer = inner
+                .consumer(ConsumerKind::Read)
+                .ok_or(Error::NotRunning)?;
+            Arc::clone(&consumer.ring)
+        };
+
+        // The handle lock is released before waiting, so stop can run
+        // while a reader is parked here.
+        let taken = ring.take(timeout)?;
+        let mut chunk = taken.item;
+        chunk.dropped_before = taken.dropped_before;
+        Ok(chunk)
     }
 
     pub fn is_running(&self) -> bool {
@@ -121,8 +171,11 @@ impl EdgeEar {
                 return;
             }
             inner.state = HandleState::Destroyed;
+            if let Some(mut capture) = inner.capture.take() {
+                capture.stop();
+            }
+            inner.consumers.clear();
         }
-        self.read_ring.close();
         self.dispatcher.shutdown();
     }
 
@@ -164,6 +217,17 @@ impl EdgeEar {
     pub fn set_output_device(&self, name: Option<&str>) -> Result<()> {
         let mut inner = self.stopped_only("the output device")?;
         inner.config.fixed.output_device = name.map(str::to_string);
+        Ok(())
+    }
+
+    /// How much recent audio each consumer keeps. Sets the ceiling on
+    /// pre-roll, so it cannot change while capture is running.
+    pub fn set_ring_capacity(&self, capacity: Duration) -> Result<()> {
+        let mut inner = self.stopped_only("the ring capacity")?;
+        let mut candidate = inner.config.clone();
+        candidate.fixed.ring_capacity = capacity;
+        candidate.validate()?;
+        inner.config = candidate;
         Ok(())
     }
 
@@ -256,6 +320,33 @@ impl Drop for EdgeEar {
     fn drop(&mut self) {
         self.destroy();
     }
+}
+
+/// The three consumers, each with its own queue, format, and frame
+/// size. They are built together but share nothing.
+fn build_consumers(config: &Config) -> Vec<Consumer> {
+    let fixed = &config.fixed;
+    let capacity = fixed.ring_capacity;
+
+    vec![
+        // The read path is always on: an application that only reads
+        // raw audio never has to know the detectors exist.
+        Consumer::new(ConsumerKind::Read, fixed.read_format, None, capacity, true),
+        Consumer::new(
+            ConsumerKind::Wake,
+            fixed.wake_format,
+            fixed.wake_format.frame_samples(Target::Wake),
+            capacity,
+            false,
+        ),
+        Consumer::new(
+            ConsumerKind::Speech,
+            fixed.speech_format,
+            fixed.speech_format.frame_samples(Target::Speech),
+            capacity,
+            false,
+        ),
+    ]
 }
 
 #[cfg(test)]

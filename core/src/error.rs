@@ -69,6 +69,9 @@ pub enum Error {
 
     #[error("{device} device failed: {reason}")]
     Backend { device: Device, reason: String },
+
+    #[error("audio conversion failed: {reason}")]
+    Conversion { reason: String },
 }
 
 impl Error {

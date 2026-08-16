@@ -1,8 +1,18 @@
+pub mod convert;
 pub mod ring;
 
-use std::time::Instant;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
-use crate::config::{AudioFormat, SampleType};
+use crate::backend::InputStream;
+use crate::capture::convert::{Converter, FrameAccumulator};
+use crate::capture::ring::Ring;
+use crate::config::{AudioFormat, Device, SampleType};
+use crate::error::{Error, Result};
+use crate::events::Event;
+use crate::events::dispatch::Dispatcher;
 
 /// Audio samples in whichever form the consumer asked for.
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +92,238 @@ pub enum ConsumerKind {
     Wake,
     Speech,
     Read,
+}
+
+/// One independent reader, with its own queue, its own format, and its
+/// own switch. Nothing here is shared with another consumer.
+pub struct Consumer {
+    pub kind: ConsumerKind,
+    pub ring: Arc<Ring<AudioChunk>>,
+    pub format: AudioFormat,
+    /// Samples per delivery. `None` hands over whatever the device
+    /// block produced, which is what the read path wants.
+    pub frame_samples: Option<usize>,
+    /// Off means the capture thread skips it entirely. Flipping this
+    /// takes effect on the next block and disturbs nobody else.
+    pub enabled: Arc<AtomicBool>,
+}
+
+/// Cloning shares the queue and the switch rather than copying them.
+/// That is how the handle and the capture thread hold the same
+/// consumer: one flips the switch, the other feeds the queue.
+impl Clone for Consumer {
+    fn clone(&self) -> Self {
+        Self {
+            kind: self.kind,
+            ring: Arc::clone(&self.ring),
+            format: self.format,
+            frame_samples: self.frame_samples,
+            enabled: Arc::clone(&self.enabled),
+        }
+    }
+}
+
+impl Consumer {
+    pub fn new(
+        kind: ConsumerKind,
+        format: AudioFormat,
+        frame_samples: Option<usize>,
+        ring_capacity: Duration,
+        enabled: bool,
+    ) -> Self {
+        Self {
+            kind,
+            ring: Arc::new(Ring::new(ring_chunks(format, frame_samples, ring_capacity))),
+            format,
+            frame_samples,
+            enabled: Arc::new(AtomicBool::new(enabled)),
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+}
+
+/// How many chunks a consumer's queue must hold to cover the wanted
+/// history. Sized from time rather than a bare number, so pre-roll and
+/// capacity stay tied together.
+fn ring_chunks(format: AudioFormat, frame_samples: Option<usize>, capacity: Duration) -> usize {
+    // Without a fixed frame size, assume a modest device block so the
+    // queue still covers roughly the wanted time.
+    let per_chunk = frame_samples.unwrap_or((format.sample_rate as usize / 100).max(1));
+    let total = (capacity.as_secs_f64() * format.sample_rate as f64) as usize;
+    (total / per_chunk.max(1)).clamp(8, 4096)
+}
+
+/// The one owner of the microphone.
+///
+/// It reads the device once and hands every block to each enabled
+/// consumer. It never waits on a consumer, so no consumer can slow it
+/// down or slow another consumer down.
+///
+/// What this loop is allowed to do, checked against what it calls:
+///
+/// - **Waiting**: only on the device, in `stream.read`. Handing a block
+///   to a consumer drops the oldest instead of waiting, and raising a
+///   notification drops the oldest instead of waiting. Neither can park
+///   this thread. The waiting form of the queue is for feeding the
+///   speaker and must never be called from here.
+/// - **Locks**: each consumer's queue and the notification queue take a
+///   lock, held only long enough to move one item. No lock is ever held
+///   across user code, and no user code runs on this thread at all.
+/// - **Allocation**: one block's worth per consumer, per block. It is
+///   proportional to the block and does not grow over time. Removing it
+///   would mean pooling buffers, which is worth doing only if a
+///   measurement says it matters.
+pub struct CaptureThread {
+    stop: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
+    rings: Vec<Arc<Ring<AudioChunk>>>,
+}
+
+impl CaptureThread {
+    pub fn start(
+        stream: Box<dyn InputStream>,
+        consumers: Vec<Consumer>,
+        dispatcher: Arc<Dispatcher>,
+    ) -> Result<Self> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let rings = consumers.iter().map(|c| Arc::clone(&c.ring)).collect();
+
+        let worker = {
+            let stop = Arc::clone(&stop);
+            thread::Builder::new()
+                .name("edge-ear-capture".to_string())
+                .spawn(move || run(stream, consumers, dispatcher, stop))
+                .map_err(|e| Error::Backend {
+                    device: Device::Input,
+                    reason: format!("capture thread would not start: {e}"),
+                })?
+        };
+
+        Ok(Self {
+            stop,
+            worker: Some(worker),
+            rings,
+        })
+    }
+
+    /// Stop reading and release every waiting reader.
+    pub fn stop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        for ring in &self.rings {
+            ring.close();
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for CaptureThread {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn run(
+    mut stream: Box<dyn InputStream>,
+    consumers: Vec<Consumer>,
+    dispatcher: Arc<Dispatcher>,
+    stop: Arc<AtomicBool>,
+) {
+    let device_format = stream.format();
+
+    // One converter per wanted format, not one per consumer. Two
+    // consumers asking for the same thing share the work.
+    let mut formats: Vec<AudioFormat> = Vec::new();
+    for consumer in &consumers {
+        if !formats.contains(&consumer.format) {
+            formats.push(consumer.format);
+        }
+    }
+
+    let mut converters = Vec::with_capacity(formats.len());
+    for format in &formats {
+        match Converter::new(device_format, *format) {
+            Ok(c) => converters.push(c),
+            Err(e) => {
+                dispatcher.emit(Event::DeviceError {
+                    device: Device::Input,
+                    message: e.to_string(),
+                });
+                return;
+            }
+        }
+    }
+
+    let slot_of: Vec<usize> = consumers
+        .iter()
+        .map(|c| {
+            formats
+                .iter()
+                .position(|f| *f == c.format)
+                .expect("every format was collected above")
+        })
+        .collect();
+
+    let mut accumulators: Vec<FrameAccumulator> = consumers
+        .iter()
+        .map(|c| FrameAccumulator::new(c.frame_samples))
+        .collect();
+
+    while !stop.load(Ordering::Relaxed) {
+        let block = match stream.read() {
+            Ok(block) => block,
+            Err(Error::Stopped) => break,
+            Err(e) => {
+                dispatcher.emit(Event::DeviceError {
+                    device: Device::Input,
+                    message: e.to_string(),
+                });
+                break;
+            }
+        };
+        let captured_at = Instant::now();
+
+        // Convert once per wanted format.
+        let mut converted: Vec<Option<Samples>> = Vec::with_capacity(converters.len());
+        for converter in converters.iter_mut() {
+            match converter.convert(&block) {
+                Ok(samples) => converted.push(Some(samples)),
+                Err(e) => {
+                    dispatcher.emit(Event::DeviceError {
+                        device: Device::Input,
+                        message: e.to_string(),
+                    });
+                    converted.push(None);
+                }
+            }
+        }
+
+        for (index, consumer) in consumers.iter().enumerate() {
+            if !consumer.is_enabled() {
+                // Still drop whatever it would have received, so it does
+                // not resume with stale audio.
+                accumulators[index].clear();
+                continue;
+            }
+            let Some(samples) = converted[slot_of[index]].as_ref() else {
+                continue;
+            };
+            for frame in accumulators[index].push(samples.clone()) {
+                consumer
+                    .ring
+                    .push(AudioChunk::new(frame, consumer.format, captured_at));
+            }
+        }
+    }
+
+    let _ = stream.stop();
+    for consumer in &consumers {
+        consumer.ring.close();
+    }
 }
 
 #[cfg(test)]
