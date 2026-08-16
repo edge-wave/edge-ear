@@ -11,8 +11,15 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = ["cpal-backend"]
+# The default way to reach the microphone and speaker. Turning it off
+# leaves the backend trait in place, so another implementation can take
+# over without dragging ALSA or CoreAudio in.
+cpal-backend = ["dep:cpal"]
+
 [dependencies]
-cpal.workspace = true
+cpal = { workspace = true, optional = true }
 rubato.workspace = true
 symphonia.workspace = true
 thiserror.workspace = true

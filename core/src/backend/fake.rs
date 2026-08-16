@@ -74,10 +74,12 @@ impl FakeBackend {
             input_format: Some(AudioFormat::mono_16k()),
             block_samples: 160,
             input_devices: vec![DeviceInfo {
+                id: "fake:input:0".to_string(),
                 name: "fake input".to_string(),
                 is_default: true,
             }],
             output_devices: vec![DeviceInfo {
+                id: "fake:output:0".to_string(),
                 name: "fake output".to_string(),
                 is_default: true,
             }],
