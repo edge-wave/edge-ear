@@ -1,0 +1,18 @@
+[package]
+name = "edge-ear-py"
+description = "Python binding for edge-ear"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "edge_ear"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+edge-ear-core.workspace = true
+pyo3 = { workspace = true, features = ["extension-module", "abi3-py39"] }
