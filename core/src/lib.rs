@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use std::time::Duration;
 
-use backend::{AudioBackend, DeviceInfo, FormatRequest, fake::FakeBackend};
+use backend::{AudioBackend, DeviceInfo, FormatRequest};
 use capture::{AudioChunk, CaptureThread, Consumer, ConsumerKind};
 use config::{AudioFormat, Config, Target};
 use error::{Error, Result};
@@ -56,10 +56,16 @@ pub struct EdgeEar {
 
 impl EdgeEar {
     /// Build a handle over the real audio devices.
+    #[cfg(feature = "cpal-backend")]
     pub fn new() -> Result<Self> {
-        // Until the cpal backend lands, the fake one keeps the surface
-        // usable and every lifecycle test honest.
-        Self::with_backend(Box::new(FakeBackend::silent()))
+        Self::with_backend(Box::new(backend::cpal_backend::CpalBackend::new()))
+    }
+
+    /// Without a device backend compiled in there is nothing to open,
+    /// so a caller must supply one.
+    #[cfg(not(feature = "cpal-backend"))]
+    pub fn new() -> Result<Self> {
+        Err(Error::NoDevice(config::Device::Input))
     }
 
     /// Build a handle over a supplied backend. This is how tests run
@@ -352,6 +358,7 @@ fn build_consumers(config: &Config) -> Vec<Consumer> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use backend::fake::FakeBackend;
     use config::SampleType;
     use std::time::Duration;
 

@@ -1,3 +1,5 @@
+#[cfg(feature = "cpal-backend")]
+pub mod cpal_backend;
 pub mod fake;
 
 use crate::capture::Samples;
@@ -7,8 +9,11 @@ use crate::error::Result;
 /// What a device says it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceInfo {
-    /// Usable unchanged on Linux and macOS. An application picking a
-    /// device by name needs no platform-specific code.
+    /// The one that picks this device again later. Unique, stable, and
+    /// safe to store. Names are not: a machine can show several
+    /// devices with exactly the same name.
+    pub id: String,
+    /// For showing to a person. May repeat across devices.
     pub name: String,
     pub is_default: bool,
 }
