@@ -1,0 +1,19 @@
+[package]
+name = "edge-ear-core"
+description = "Local real-time audio front end: capture, wake word, speech detection, playback"
+keywords = ["audio", "wake-word", "vad", "microphone", "realtime"]
+categories = ["multimedia::audio"]
+readme = "../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+cpal.workspace = true
+rubato.workspace = true
+symphonia.workspace = true
+thiserror.workspace = true
+ort.workspace = true

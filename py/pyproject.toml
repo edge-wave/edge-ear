@@ -1,0 +1,24 @@
+[build-system]
+requires = ["maturin>=1.14,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "edge-ear"
+description = "Local real-time audio front end: capture, wake word, speech detection, playback"
+readme = "../README.md"
+requires-python = ">=3.9"
+license = "MIT OR Apache-2.0"
+license-files = ["../LICENSE-MIT", "../LICENSE-APACHE"]
+authors = [{ name = "The edge-ear Authors" }]
+classifiers = [
+    "Programming Language :: Rust",
+    "Topic :: Multimedia :: Sound/Audio :: Capture/Recording",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/edge-wave/edge-ear"
+
+[tool.maturin]
+module-name = "edge_ear"
+features = ["pyo3/extension-module"]

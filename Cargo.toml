@@ -1,0 +1,30 @@
+[workspace]
+members = ["core", "capi", "py"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/edge-wave/edge-ear"
+authors = ["The edge-ear Authors"]
+
+[workspace.dependencies]
+edge-ear-core = { path = "core", version = "0.1.0" }
+
+cpal = "0.18.1"
+rubato = "5.0.0"
+symphonia = { version = "0.6.1", default-features = false, features = [
+    "wav",
+    "ogg",
+    "vorbis",
+    "pcm",
+] }
+thiserror = "2"
+
+# Pinned exactly. ort has no stable release and its release candidates
+# change behaviour, so a caret range could break the build silently.
+ort = "=2.0.0-rc.13"
+
+pyo3 = "0.29.2"
