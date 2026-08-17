@@ -12,6 +12,10 @@ use crate::error::{Error, Result};
 pub struct Ring<T> {
     inner: Mutex<Inner<T>>,
     ready: Condvar,
+    /// Woken when an item leaves. Only the playback side waits on this:
+    /// filling the speaker faster than it drains would throw audio
+    /// away, so there the writer does wait.
+    space: Condvar,
 }
 
 struct Inner<T> {
@@ -43,6 +47,7 @@ impl<T> Ring<T> {
                 closed: false,
             }),
             ready: Condvar::new(),
+            space: Condvar::new(),
         }
     }
 
@@ -60,6 +65,42 @@ impl<T> Ring<T> {
         self.ready.notify_one();
     }
 
+    /// Add an item, waiting for room instead of dropping the oldest.
+    ///
+    /// This is for feeding the speaker, where throwing away audio that
+    /// has not played yet would be heard. Never call it from a device
+    /// callback or from the capture thread.
+    /// Returns `Timeout` if there was still no room in time, so the
+    /// caller can check whether it has been told to stop and try again.
+    /// Waiting for ever here would leave a stopping player wedged.
+    pub fn push_before(&self, item: T, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        let mut inner = self.lock();
+        loop {
+            if inner.closed {
+                return Err(Error::Stopped);
+            }
+            if inner.items.len() < inner.capacity {
+                inner.items.push_back(item);
+                drop(inner);
+                self.ready.notify_one();
+                return Ok(());
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(Error::Timeout);
+            }
+            let (guard, wait) = self
+                .space
+                .wait_timeout(inner, left)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            inner = guard;
+            if wait.timed_out() && inner.items.len() >= inner.capacity && !inner.closed {
+                return Err(Error::Timeout);
+            }
+        }
+    }
+
     /// Take the next item, waiting if there is none.
     ///
     /// `timeout` of `None` waits until an item arrives or the ring
@@ -72,6 +113,8 @@ impl<T> Ring<T> {
         loop {
             if let Some(item) = inner.items.pop_front() {
                 let dropped_before = std::mem::take(&mut inner.dropped_pending);
+                drop(inner);
+                self.space.notify_one();
                 return Ok(Taken {
                     item,
                     dropped_before,
@@ -106,6 +149,8 @@ impl<T> Ring<T> {
         let mut inner = self.lock();
         let item = inner.items.pop_front()?;
         let dropped_before = std::mem::take(&mut inner.dropped_pending);
+        drop(inner);
+        self.space.notify_one();
         Some(Taken {
             item,
             dropped_before,
@@ -117,6 +162,7 @@ impl<T> Ring<T> {
     pub fn close(&self) {
         self.lock().closed = true;
         self.ready.notify_all();
+        self.space.notify_all();
     }
 
     pub fn reopen(&self) {
