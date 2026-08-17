@@ -204,8 +204,12 @@ impl OutputStream for CpalOutput {
     }
 
     fn write(&mut self, samples: &Samples) -> Result<()> {
-        self.queue.push(samples.clone());
-        Ok(())
+        // Wait for room rather than dropping the oldest: audio that has
+        // not played yet would be heard going missing. The wait is
+        // bounded so a stopping player is never left wedged; the caller
+        // retries after checking whether it should stop.
+        self.queue
+            .push_before(samples.clone(), Duration::from_millis(100))
     }
 
     fn stop(&mut self) -> Result<()> {

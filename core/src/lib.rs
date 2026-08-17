@@ -9,6 +9,7 @@ pub mod capture;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod player;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -20,6 +21,8 @@ use config::{AudioFormat, Config, Target};
 use error::{Error, Result};
 use events::Event;
 use events::dispatch::{DEFAULT_QUEUE_CAPACITY, Dispatcher};
+use player::Player;
+use player::registry::{Registry, SoundSource};
 
 /// Where a handle is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +42,11 @@ struct Inner {
     /// Live only while capturing. Rebuilt on every start, because the
     /// conversion pipeline is fixed when the thread comes up.
     consumers: Vec<Consumer>,
+    /// The one owner of the speaker. Opened when the first sound is
+    /// wanted, not at start, so an application that never plays
+    /// anything never claims the device.
+    player: Option<Player>,
+    sounds: Registry,
 }
 
 impl Inner {
@@ -80,6 +88,8 @@ impl EdgeEar {
                 config,
                 capture: None,
                 consumers: Vec::new(),
+                player: None,
+                sounds: Registry::new(),
             }),
             dispatcher: Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY)),
             backend: Mutex::new(backend),
@@ -159,6 +169,88 @@ impl EdgeEar {
         Ok(chunk)
     }
 
+    // ── sound playback ───────────────────────────────────────────────
+
+    /// Register a sound so it can be played later.
+    ///
+    /// Allowed at any time, including while running. It adds an asset
+    /// and changes no pipeline, which is what lets a spoken reply that
+    /// arrives at run time be played without a restart.
+    pub fn register_sound(&self, id: &str, source: SoundSource, volume: f32) -> Result<()> {
+        let output = self.ensure_player()?;
+        let mut inner = self.alive_mut()?;
+        inner
+            .sounds
+            .register(id.to_string(), source, volume, output)
+    }
+
+    /// Forget a sound and release the audio it held.
+    pub fn unregister_sound(&self, id: &str) -> Result<()> {
+        let mut inner = self.alive_mut()?;
+        inner.sounds.unregister(id)
+    }
+
+    /// Play a registered sound, optionally repeating until stopped.
+    /// A newer sound supersedes whatever was playing.
+    pub fn play_sound(&self, id: &str, repeat: bool) -> Result<()> {
+        self.ensure_player()?;
+        let inner = self.alive_mut()?;
+        let sound = inner.sounds.get(id)?.clone();
+        let player = inner
+            .player
+            .as_ref()
+            .ok_or(Error::NoDevice(config::Device::Output))?;
+        player.play(sound, repeat);
+        Ok(())
+    }
+
+    /// Cut playback short. No completion event follows, because the
+    /// sound did not end on its own.
+    pub fn stop_sound(&self) -> Result<()> {
+        let inner = self.alive_mut()?;
+        if let Some(player) = inner.player.as_ref() {
+            player.stop_sound();
+        }
+        Ok(())
+    }
+
+    pub fn is_playing(&self) -> bool {
+        let inner = self.lock();
+        inner.player.as_ref().is_some_and(|p| p.is_playing())
+    }
+
+    /// Open the speaker if it is not open yet, and report the format it
+    /// runs at. Sounds are decoded into that format once, here, rather
+    /// than on every play.
+    fn ensure_player(&self) -> Result<AudioFormat> {
+        {
+            let inner = self.alive_mut()?;
+            if let Some(player) = inner.player.as_ref() {
+                return Ok(player.format());
+            }
+        }
+
+        let request = {
+            let inner = self.lock();
+            FormatRequest {
+                device: inner.config.fixed.output_device.clone(),
+                preferred: inner.config.fixed.read_format,
+            }
+        };
+        let stream = self.backend_lock().open_output(&request)?;
+        let player = Player::start(stream, Arc::clone(&self.dispatcher))?;
+        let format = player.format();
+
+        let mut inner = self.alive_mut()?;
+        // Another thread may have opened it while the device was being
+        // set up. One owner only, so the first one wins.
+        if let Some(existing) = inner.player.as_ref() {
+            return Ok(existing.format());
+        }
+        inner.player = Some(player);
+        Ok(format)
+    }
+
     pub fn is_running(&self) -> bool {
         self.lock().state == HandleState::Running
     }
@@ -181,6 +273,10 @@ impl EdgeEar {
                 capture.stop();
             }
             inner.consumers.clear();
+            if let Some(mut player) = inner.player.take() {
+                player.shutdown();
+            }
+            inner.sounds.clear();
         }
         self.dispatcher.shutdown();
     }
