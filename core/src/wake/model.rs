@@ -103,6 +103,23 @@ impl Stage {
     }
 }
 
+/// Turning frames of audio into how likely the wake word just finished.
+///
+/// Behind a trait for one reason: everything built on top of it — when
+/// a score counts, how long to look away afterwards, what happens the
+/// moment it counts — is logic worth testing without three model files
+/// in the way. A scripted stand-in makes those tests exact and quick.
+///
+/// Only one real source ships. The trait is not a way to run several.
+pub trait WakeSource: Send {
+    /// Feed one frame of audio. Gives a score once enough has been
+    /// heard to give one.
+    fn push(&mut self, frame: &[i16]) -> Result<Option<f32>>;
+
+    /// Forget everything heard so far.
+    fn reset(&mut self);
+}
+
 /// The three stages together, with the buffers between them.
 pub struct WakeModel {
     spectrogram: Stage,
@@ -157,7 +174,7 @@ impl WakeModel {
         }
 
         self.word = Some(stage);
-        self.reset();
+        self.clear();
         Ok(())
     }
 
@@ -166,9 +183,7 @@ impl WakeModel {
         self.word.is_some()
     }
 
-    /// Feed one frame of audio and get how likely the wake word just
-    /// finished, once enough has been heard to say.
-    pub fn push(&mut self, frame: &[i16]) -> Result<Option<f32>> {
+    fn feed(&mut self, frame: &[i16]) -> Result<Option<f32>> {
         if self.word.is_none() {
             return Err(Error::NoWakeModel);
         }
@@ -189,12 +204,7 @@ impl WakeModel {
         self.score()
     }
 
-    /// Forget everything heard so far.
-    ///
-    /// Clearing the score alone is not enough: the audio that caused a
-    /// detection is still inside these buffers and would cause another
-    /// one at once.
-    pub fn reset(&mut self) {
+    fn clear(&mut self) {
         self.audio_tail = vec![0.0; SPECTROGRAM_CONTEXT];
         self.mel.clear();
         self.speech.clear();
@@ -247,6 +257,19 @@ impl WakeModel {
         let word = self.word.as_mut().expect("checked by the caller");
         let (_, values) = word.run(vec![1, FEATURE_WINDOW as i64, FEATURE_WIDTH as i64], recent)?;
         Ok(values.first().copied())
+    }
+}
+
+impl WakeSource for WakeModel {
+    fn push(&mut self, frame: &[i16]) -> Result<Option<f32>> {
+        self.feed(frame)
+    }
+
+    /// Clearing the score alone is not enough: the audio that caused a
+    /// detection is still inside these buffers and would cause another
+    /// one at once.
+    fn reset(&mut self) {
+        self.clear();
     }
 }
 
