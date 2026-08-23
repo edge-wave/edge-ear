@@ -136,6 +136,8 @@ impl EdgeEar {
 
     // ── lifecycle ────────────────────────────────────────────────────
 
+    /// Open the microphone and begin reading it. Formats and devices
+    /// are fixed from here until the handle is stopped.
     pub fn start(&self) -> Result<()> {
         let mut inner = self.lock();
         match inner.state {
@@ -247,6 +249,8 @@ impl EdgeEar {
         Ok(())
     }
 
+    /// Release the microphone and the speaker. The handle can be
+    /// configured and started again afterwards.
     pub fn stop(&self) -> Result<()> {
         let mut inner = self.lock();
         match inner.state {
@@ -303,9 +307,8 @@ impl EdgeEar {
 
     /// Supply the two models every wake word shares.
     ///
-    /// Neither knows any word. This library ships neither, because the
-    /// terms they come under are not the terms this library is offered
-    /// under.
+    /// Neither knows any word. Neither is shipped here, because their
+    /// terms are not the ones this library is offered under.
     pub fn load_wake_features(&self, spectrogram: &Path, features: &Path) -> Result<()> {
         let mut inner = self.stopped_only("the wake word models")?;
         // Checked now rather than at the next start, so a wrong path is
@@ -317,9 +320,8 @@ impl EdgeEar {
 
     /// Supply the model for the phrase to listen for.
     ///
-    /// Its shape is checked here. Tensor names are not part of the
-    /// contract: every model from the training pipeline has its own,
-    /// and any of them works.
+    /// Its shape is checked here. Names inside it are not: every model
+    /// has its own, and any of them works.
     pub fn load_wake_model(&self, path: &Path) -> Result<()> {
         let mut inner = self.stopped_only("the wake word model")?;
         let (spectrogram, features) = inner.wake_models.clone().ok_or(Error::NoWakeModel)?;
@@ -331,13 +333,9 @@ impl EdgeEar {
 
     /// Start listening for the wake word.
     ///
-    /// Naming a sound has the library play it on detection and hold
-    /// off counting silence until it has finished, so the tail of the
-    /// sound is never mistaken for someone speaking. Without one, the
-    /// recording starts counting straight away.
-    ///
-    /// Works before or after capture starts. Without a model loaded it
-    /// says so rather than listening for nothing.
+    /// Naming a sound plays it on detection and holds off counting
+    /// silence until it ends, so its tail is not taken for speech.
+    /// Without a model loaded this says so instead.
     pub fn enable_wake(&self, alert: Option<&str>) -> Result<()> {
         {
             let mut inner = self.alive_mut()?;
@@ -367,18 +365,18 @@ impl EdgeEar {
 
     /// How sure the detector was, most recently.
     ///
-    /// This is every score, not only the ones that counted. Choosing
-    /// how sure it must be is guesswork without seeing the ones that
-    /// fell short. Nothing until capture is running with a wake word
-    /// loaded and enough has been heard to score.
+    /// Every score, not only the ones that counted, because setting a
+    /// threshold is guesswork without seeing the ones that fell short.
     pub fn wake_score(&self) -> Option<f32> {
         self.lock().wake.as_ref().and_then(|w| w.last_score())
     }
 
+    /// Stop listening for the wake word. The models stay loaded.
     pub fn disable_wake(&self) -> Result<()> {
         self.set_consumer(ConsumerKind::Wake, false)
     }
 
+    /// True while the wake word is being listened for.
     pub fn is_wake_enabled(&self) -> bool {
         self.lock().wake_wanted
     }
@@ -402,10 +400,12 @@ impl EdgeEar {
         self.set_consumer(ConsumerKind::Speech, true)
     }
 
+    /// Stop watching for speech. Any open recording is dropped.
     pub fn disable_speech(&self) -> Result<()> {
         self.set_consumer(ConsumerKind::Speech, false)
     }
 
+    /// True while speech and silence are being watched for.
     pub fn is_speech_enabled(&self) -> bool {
         self.lock().speech_wanted
     }
@@ -496,9 +496,8 @@ impl EdgeEar {
 
     /// Register a sound so it can be played later.
     ///
-    /// Allowed at any time, including while running. It adds an asset
-    /// and changes no pipeline, which is what lets a spoken reply that
-    /// arrives at run time be played without a restart.
+    /// Allowed while running, because it adds an asset and rebuilds no
+    /// pipeline. A reply that arrives at run time can be played.
     pub fn register_sound(&self, id: &str, source: SoundSource, volume: f32) -> Result<()> {
         let output = self.ensure_player()?;
         let inner = self.alive_mut()?;
@@ -545,6 +544,7 @@ impl EdgeEar {
         Ok(())
     }
 
+    /// True while a sound is coming out of the speaker.
     pub fn is_playing(&self) -> bool {
         let inner = self.lock();
         inner.player.as_ref().is_some_and(|p| p.is_playing())
@@ -582,10 +582,12 @@ impl EdgeEar {
         Ok(format)
     }
 
+    /// True between a successful start and a stop.
     pub fn is_running(&self) -> bool {
         self.lock().state == HandleState::Running
     }
 
+    /// Where the handle is in its life: made, running, or destroyed.
     pub fn state(&self) -> HandleState {
         self.lock().state
     }
@@ -651,12 +653,16 @@ impl EdgeEar {
         Ok(())
     }
 
+    /// Choose a microphone by its identifier. `None` means the one
+    /// the system prefers. Fixed once capture has started.
     pub fn set_input_device(&self, name: Option<&str>) -> Result<()> {
         let mut inner = self.stopped_only("the input device")?;
         inner.config.fixed.input_device = name.map(str::to_string);
         Ok(())
     }
 
+    /// Choose a speaker by its identifier. `None` means the one the
+    /// system prefers. Fixed once capture has started.
     pub fn set_output_device(&self, name: Option<&str>) -> Result<()> {
         let mut inner = self.stopped_only("the output device")?;
         inner.config.fixed.output_device = name.map(str::to_string);
@@ -687,13 +693,14 @@ impl EdgeEar {
     /// How long the detector looks away after hearing the wake word,
     /// counted in frames of 80 ms.
     ///
-    /// It has to be long enough that the utterance just heard is not
-    /// heard again on its way out of the pipeline. Longer than that is
-    /// time spent unable to hear the next one.
+    /// Long enough that what was just heard is not heard again on its
+    /// way out. Longer than that is time spent unable to hear more.
     pub fn set_wake_settle_frames(&self, frames: u32) -> Result<()> {
         self.tune(|c| c.tunable.wake_settle_frames = frames)
     }
 
+    /// How sure the detector must be before it says it heard the
+    /// word, from 0.0 to 1.0. Changeable while running.
     pub fn set_wake_threshold(&self, value: f32) -> Result<()> {
         self.tune(|c| c.tunable.wake_threshold = value)?;
         let inner = self.lock();
@@ -707,8 +714,7 @@ impl EdgeEar {
     ///
     /// These next five shape a recording, and a recording follows the
     /// rules it opened with. Changing one while a recording is open is
-    /// refused rather than quietly ignored, so a call that returns
-    /// success has always done something.
+    /// refused, so a call that returns success has always done something.
     pub fn set_speech_threshold(&self, value: f32) -> Result<()> {
         self.tune_recording("the speech threshold", |c| {
             c.tunable.speech_threshold = value
@@ -722,18 +728,24 @@ impl EdgeEar {
         })
     }
 
+    /// The longest a recording may run before it is handed over
+    /// regardless of what the speaker is doing.
     pub fn set_max_recording(&self, value: std::time::Duration) -> Result<()> {
         self.tune_recording("the maximum recording length", |c| {
             c.tunable.max_recording = value
         })
     }
 
+    /// How long to wait for anyone to speak at all before giving up
+    /// on a recording.
     pub fn set_no_speech_timeout(&self, value: std::time::Duration) -> Result<()> {
         self.tune_recording("the no-speech timeout", |c| {
             c.tunable.no_speech_timeout = value
         })
     }
 
+    /// How much audio from before the recording opened to include,
+    /// so a word begun early is not cut off. Limited by the history.
     pub fn set_pre_roll(&self, value: std::time::Duration) -> Result<()> {
         self.tune_recording("the pre-roll", |c| c.tunable.pre_roll = value)
     }
@@ -755,17 +767,20 @@ impl EdgeEar {
         self.tune(apply)
     }
 
+    /// A copy of every setting as it stands now.
     pub fn config(&self) -> Config {
         self.lock().config.clone()
     }
 
     // ── devices ──────────────────────────────────────────────────────
 
+    /// Every microphone the system offers.
     pub fn input_devices(&self) -> Result<Vec<DeviceInfo>> {
         self.alive()?;
         self.backend_lock().input_devices()
     }
 
+    /// Every speaker the system offers.
     pub fn output_devices(&self) -> Result<Vec<DeviceInfo>> {
         self.alive()?;
         self.backend_lock().output_devices()
