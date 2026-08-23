@@ -242,6 +242,7 @@ mod tests {
     use crate::config::AudioFormat;
     use crate::events::dispatch::DEFAULT_QUEUE_CAPACITY;
     use crate::wake::model::ScriptedWake;
+    use std::sync::Mutex;
     use std::sync::atomic::AtomicBool;
     use std::time::Instant;
 
@@ -418,6 +419,59 @@ mod tests {
             "the application was told before the alert and recording were seen to"
         );
         thread.shutdown();
+    }
+
+    /// The library's own share of the delay, from the audio arriving to
+    /// the application hearing about it. What a model needs before it
+    /// can score at all is the model's business, not this one's.
+    #[test]
+    fn word_to_notification_is_well_inside_the_target() {
+        let ring = Arc::new(Ring::new(64));
+        let dispatcher = Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY));
+        let told = Arc::new(Mutex::new(None::<Instant>));
+
+        let sink = Arc::clone(&told);
+        dispatcher.set_handler(Box::new(move |event| {
+            if matches!(event, Event::WakeDetected { .. }) {
+                let mut slot = sink.lock().unwrap_or_else(|e| e.into_inner());
+                if slot.is_none() {
+                    *slot = Some(Instant::now());
+                }
+            }
+        }));
+
+        let thread = WakeThread::start(
+            // Quiet until the frame that carries the word.
+            detector(ScriptedWake::heard_after(3, 0.9), 0.5, 20),
+            Arc::clone(&ring),
+            Arc::clone(&dispatcher),
+            Box::new(|| {}),
+        )
+        .unwrap();
+
+        for _ in 0..3 {
+            ring.push(chunk());
+        }
+        // The frame the word is in. Everything after this is us.
+        let spoken = Instant::now();
+        ring.push(chunk());
+
+        assert!(
+            wait_until(|| told.lock().unwrap_or_else(|e| e.into_inner()).is_some()),
+            "the application was never told"
+        );
+        let at = told
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .expect("just checked");
+        thread.shutdown();
+
+        let took = at.duration_since(spoken);
+        println!("wake word to notification: {took:?}");
+        assert!(
+            took < Duration::from_millis(300),
+            "the application waited {took:?}, longer than the 300 ms allowed"
+        );
     }
 
     #[test]
