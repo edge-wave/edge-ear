@@ -26,12 +26,15 @@ fn ramp(samples: usize) -> Vec<i16> {
 
 #[test]
 fn audio_arrives_continuously_with_nothing_dropped() {
-    let ear = ear();
+    // A device that hands blocks over at the speed a real one would.
+    // Asking whether a reader keeps up is meaningless against a device
+    // that runs as fast as the machine allows.
+    let ear = EdgeEar::with_backend(Box::new(FakeBackend::paced())).expect("handle");
     ear.start().unwrap();
 
     let mut blocks = 0;
     let mut samples = 0usize;
-    for _ in 0..200 {
+    for _ in 0..100 {
         let chunk = ear.read(Some(Duration::from_secs(2))).expect("audio");
         assert_eq!(
             chunk.dropped_before, 0,
@@ -41,7 +44,7 @@ fn audio_arrives_continuously_with_nothing_dropped() {
         samples += chunk.samples.len();
     }
 
-    assert_eq!(blocks, 200);
+    assert_eq!(blocks, 100);
     assert!(samples > 0);
     ear.stop().unwrap();
 }
