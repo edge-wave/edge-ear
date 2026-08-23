@@ -22,3 +22,9 @@ Repository = "https://github.com/edge-wave/edge-ear"
 [tool.maturin]
 module-name = "edge_ear"
 features = ["pyo3/extension-module"]
+# The speech model travels inside the built library, so nothing extra
+# is listed here. The two wake word feature models will be added when
+# they are bundled; the wake word itself never ships.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
