@@ -356,6 +356,9 @@ struct Control {
 pub struct SpeechThread {
     control: Arc<Mutex<Control>>,
     stop: Arc<AtomicBool>,
+    /// True while a recording is collecting. Read by the handle, which
+    /// refuses to change the rules a running recording is following.
+    open: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -372,13 +375,15 @@ impl SpeechThread {
             ..Default::default()
         }));
         let stop = Arc::new(AtomicBool::new(false));
+        let open = Arc::new(AtomicBool::new(false));
 
         let worker = {
             let control = Arc::clone(&control);
             let stop = Arc::clone(&stop);
+            let open = Arc::clone(&open);
             thread::Builder::new()
                 .name("edge-ear-speech".to_string())
-                .spawn(move || run(model, format, ring, control, stop, dispatcher))
+                .spawn(move || run(model, format, ring, control, stop, open, dispatcher))
                 .map_err(|e| crate::error::Error::Backend {
                     device: crate::config::Device::Input,
                     reason: format!("speech thread would not start: {e}"),
@@ -388,6 +393,7 @@ impl SpeechThread {
         Ok(Self {
             control,
             stop,
+            open,
             worker: Some(worker),
         })
     }
@@ -398,6 +404,11 @@ impl SpeechThread {
 
     pub fn stop_recording(&self) {
         self.lock().stop = true;
+    }
+
+    /// True while a recording is collecting audio.
+    pub fn is_recording(&self) -> bool {
+        self.open.load(Ordering::Relaxed)
     }
 
     /// Told when an alert sound has finished, so the tail of the alert
@@ -436,6 +447,7 @@ fn run(
     ring: Arc<Ring<AudioChunk>>,
     control: Arc<Mutex<Control>>,
     stop: Arc<AtomicBool>,
+    open: Arc<AtomicBool>,
     dispatcher: Arc<Dispatcher>,
 ) {
     let mut detector = Detector::new(model, format);
@@ -449,7 +461,7 @@ fn run(
             Err(_) => break,
         };
 
-        let (open, should_stop, counting, limits) = {
+        let (opening, should_stop, counting, limits) = {
             let mut c = control.lock().unwrap_or_else(|e| e.into_inner());
             (
                 c.open.take(),
@@ -459,13 +471,15 @@ fn run(
             )
         };
 
-        if let Some((pre_roll, counting_now)) = open {
+        if let Some((pre_roll, counting_now)) = opening {
             detector.open(pre_roll, counting_now);
+            open.store(true, Ordering::Relaxed);
         }
         if counting {
             detector.start_counting();
         }
         if should_stop && let Some(done) = detector.stop() {
+            open.store(false, Ordering::Relaxed);
             emit(&dispatcher, done);
             continue;
         }
@@ -475,7 +489,10 @@ fn run(
             continue;
         };
         match detector.push(samples, &limits) {
-            Ok(Some(done)) => emit(&dispatcher, done),
+            Ok(Some(done)) => {
+                open.store(false, Ordering::Relaxed);
+                emit(&dispatcher, done);
+            }
             Ok(None) => {}
             Err(e) => dispatcher.emit(Event::DeviceError {
                 device: crate::config::Device::Input,
@@ -483,6 +500,7 @@ fn run(
             }),
         }
     }
+    open.store(false, Ordering::Relaxed);
 }
 
 fn emit(dispatcher: &Dispatcher, done: Recording) {

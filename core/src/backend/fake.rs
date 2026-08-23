@@ -27,6 +27,11 @@ pub struct FakeSetup {
     /// A device that is open but hands over nothing. Lets a test check
     /// what a reader does while it waits.
     pub starve: bool,
+    /// Hand blocks over at the speed a real device would, rather than
+    /// as fast as the machine allows. Needed by any test asking whether
+    /// something keeps up, since keeping up is meaningless against a
+    /// device that runs flat out.
+    pub paced: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +114,13 @@ impl FakeBackend {
         backend
     }
 
+    /// Silence, delivered at the speed a real device would.
+    pub fn paced() -> Self {
+        let mut backend = Self::silent();
+        backend.setup.paced = true;
+        backend
+    }
+
     pub fn failing_output(failure: FakeFailure) -> Self {
         let mut backend = Self::silent();
         backend.setup.output_error = Some(failure);
@@ -123,6 +135,8 @@ struct FakeInput {
     format: AudioFormat,
     stopped: bool,
     starve: bool,
+    /// How long one block covers, waited out before handing it over.
+    pace: Option<std::time::Duration>,
 }
 
 impl InputStream for FakeInput {
@@ -147,6 +161,9 @@ impl InputStream for FakeInput {
         // Past the end of the canned audio, keep producing silence so a
         // test can run as long as it likes.
         block.resize(self.block, 0);
+        if let Some(pace) = self.pace {
+            std::thread::sleep(pace);
+        }
         Ok(Samples::I16(block))
     }
 
@@ -195,6 +212,11 @@ impl AudioBackend for FakeBackend {
             format: self.setup.input_format.unwrap_or(AudioFormat::mono_16k()),
             stopped: false,
             starve: self.setup.starve,
+            pace: self.setup.paced.then(|| {
+                let format = self.setup.input_format.unwrap_or(AudioFormat::mono_16k());
+                let frames = self.setup.block_samples.max(1) / format.channels.max(1) as usize;
+                std::time::Duration::from_secs_f64(frames as f64 / format.sample_rate as f64)
+            }),
         }))
     }
 
