@@ -144,18 +144,27 @@ fn an_hour_of_audio_with_no_gaps_and_flat_memory() {
     assert!(blocks > 0, "no audio was read at all");
     assert_eq!(gaps, 0, "audio was lost during the run");
 
-    // Memory is compared after a settling period, because the first
-    // minute is startup rather than steady state.
-    assert!(samples.len() >= 4, "not enough memory samples to judge");
-    let settled = samples.len() / 4;
-    let early = samples[settled].1;
-    let late = samples[samples.len() - 1].1;
-    println!("memory: {early} kB after settling, {late} kB at the end");
+    // Two points cannot tell settling apart from leaking, so compare
+    // the middle of the run against the end and show the shape.
+    assert!(samples.len() >= 8, "not enough memory samples to judge");
+    let quarter = samples.len() / 4;
+    let mean = |window: &[(Duration, u64)]| -> u64 {
+        window.iter().map(|(_, kb)| kb).sum::<u64>() / window.len() as u64
+    };
+    let settled = mean(&samples[quarter..quarter * 2]);
+    let ended = mean(&samples[samples.len() - quarter..]);
 
-    let growth = late.saturating_sub(early);
-    let allowed = (early / 10).max(4096);
+    println!("memory over the run:");
+    for (at, kb) in samples.iter().step_by(quarter.max(1) / 4 + 1) {
+        println!("  {:>6.0}s  {kb} kB", at.as_secs_f64());
+    }
+    println!("settled mean {settled} kB, final mean {ended} kB");
+
+    let growth = ended.saturating_sub(settled);
+    let allowed = (settled / 20).max(4096);
     assert!(
         growth < allowed,
-        "memory grew by {growth} kB, more than the {allowed} kB allowed"
+        "memory grew by {growth} kB between the middle of the run and the end, \
+         more than the {allowed} kB allowed"
     );
 }
