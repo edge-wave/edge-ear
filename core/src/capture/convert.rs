@@ -66,14 +66,6 @@ impl Converter {
         self.from == self.to
     }
 
-    pub fn from(&self) -> AudioFormat {
-        self.from
-    }
-
-    pub fn to(&self) -> AudioFormat {
-        self.to
-    }
-
     /// Convert one block. May return fewer samples than went in, or
     /// none at all, while the resampler fills its next chunk.
     pub fn convert(&mut self, input: &Samples) -> Result<Samples> {
@@ -241,6 +233,7 @@ impl FrameAccumulator {
         out
     }
 
+    #[cfg(test)]
     /// Samples held back, waiting for a frame to fill.
     pub fn held(&self) -> usize {
         self.i16_buf.len() + self.f32_buf.len()

@@ -97,15 +97,15 @@ pub enum ConsumerKind {
 /// One independent reader, with its own queue, its own format, and its
 /// own switch. Nothing here is shared with another consumer.
 pub struct Consumer {
-    pub kind: ConsumerKind,
-    pub ring: Arc<Ring<AudioChunk>>,
-    pub format: AudioFormat,
+    pub(crate) kind: ConsumerKind,
+    pub(crate) ring: Arc<Ring<AudioChunk>>,
+    pub(crate) format: AudioFormat,
     /// Samples per delivery. `None` hands over whatever the device
     /// block produced, which is what the read path wants.
-    pub frame_samples: Option<usize>,
+    pub(crate) frame_samples: Option<usize>,
     /// Off means the capture thread skips it entirely. Flipping this
     /// takes effect on the next block and disturbs nobody else.
-    pub enabled: Arc<AtomicBool>,
+    pub(crate) enabled: Arc<AtomicBool>,
 }
 
 /// Cloning shares the queue and the switch rather than copying them.

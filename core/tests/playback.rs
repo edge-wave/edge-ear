@@ -9,11 +9,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use edge_ear_core::EdgeEar;
+use edge_ear_core::SoundSource;
 use edge_ear_core::backend::fake::{FakeBackend, FakeFailure};
 use edge_ear_core::config::SampleType;
 use edge_ear_core::error::Error;
 use edge_ear_core::events::Event;
-use edge_ear_core::player::registry::SoundSource;
 
 fn ear() -> EdgeEar {
     EdgeEar::with_backend(Box::new(FakeBackend::silent())).expect("handle")
