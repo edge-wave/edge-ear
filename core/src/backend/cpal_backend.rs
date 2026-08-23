@@ -80,10 +80,11 @@ impl Default for CpalBackend {
 /// Turn a device failure into one of the three outcomes an application
 /// must be able to tell apart.
 ///
-/// A refused microphone is guessed from the message, which is the only
-/// signal cpal gives. Asking the system directly is platform work: on
-/// macOS that means the authorisation status, which belongs in a later
-/// platform pass.
+/// A refused microphone is guessed from the message, the only signal
+/// cpal gives. On macOS a refusal may open fine and deliver silence
+/// instead, in which case nothing reaches here and a refusal looks like
+/// a quiet room. Telling those apart means asking the system for the
+/// authorisation status, which is platform work not yet done.
 fn classify(device: Device, message: &str) -> Error {
     let lowered = message.to_ascii_lowercase();
     if lowered.contains("permission")
