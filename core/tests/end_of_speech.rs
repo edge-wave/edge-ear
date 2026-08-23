@@ -179,3 +179,72 @@ fn reading_audio_still_works_while_a_recording_is_open() {
     }
     ear.stop().unwrap();
 }
+
+#[test]
+fn recording_settings_can_be_changed_between_recordings() {
+    let ear = ear();
+    ear.set_silence_duration(Duration::from_millis(500))
+        .unwrap();
+    ear.set_no_speech_timeout(Duration::from_millis(200))
+        .unwrap();
+    ear.enable_speech().unwrap();
+    ear.start().unwrap();
+
+    let seen = endings(&ear);
+    ear.start_recording().unwrap();
+    assert!(wait_for(&seen, 1));
+
+    // The recording is over, so the rules can change again.
+    ear.set_silence_duration(Duration::from_millis(900))
+        .unwrap();
+    ear.set_max_recording(Duration::from_secs(12)).unwrap();
+    ear.stop().unwrap();
+}
+
+#[test]
+fn changing_the_rules_mid_recording_is_refused_rather_than_ignored() {
+    // Nothing arrives, so the recording stays open until told otherwise.
+    let ear = EdgeEar::with_backend(Box::new(FakeBackend::starving())).expect("handle");
+    ear.enable_speech().unwrap();
+    ear.start().unwrap();
+    ear.start_recording().unwrap();
+
+    // Give the detector a moment to open it.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !ear.is_recording() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(ear.is_recording(), "a recording should be open");
+
+    for result in [
+        ear.set_silence_duration(Duration::from_millis(100)),
+        ear.set_max_recording(Duration::from_secs(5)),
+        ear.set_no_speech_timeout(Duration::from_secs(5)),
+        ear.set_speech_threshold(0.9),
+        ear.set_pre_roll(Duration::from_millis(200)),
+    ] {
+        let err = result.expect_err("must be refused while a recording is open");
+        assert!(matches!(err, Error::RecordingOpen { .. }), "{err}");
+        assert!(
+            err.to_string().contains("while a recording is open"),
+            "{err}"
+        );
+    }
+
+    // The old value is untouched, since nothing was applied.
+    assert_eq!(
+        ear.config().tunable.speech_threshold,
+        0.5,
+        "a refused change must leave the setting alone"
+    );
+
+    // Once the recording ends, the same calls work.
+    ear.stop_recording().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while ear.is_recording() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    ear.set_silence_duration(Duration::from_millis(100))
+        .unwrap();
+    ear.stop().unwrap();
+}
