@@ -8,6 +8,7 @@
 //! touches Python, and a read releases the lock while it waits so other
 //! Python threads keep running.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -408,6 +409,53 @@ impl EdgeEar {
             .map_err(to_py)
     }
 
+    // ── wake word ────────────────────────────────────────────────────
+
+    /// Supply the two models every wake word shares. Neither knows any
+    /// word, and this library ships neither.
+    fn load_wake_features(&self, spectrogram: PathBuf, features: PathBuf) -> PyResult<()> {
+        self.core
+            .load_wake_features(&spectrogram, &features)
+            .map_err(to_py)
+    }
+
+    /// Supply the model for the phrase to listen for.
+    fn load_wake_model(&self, path: PathBuf) -> PyResult<()> {
+        self.core.load_wake_model(&path).map_err(to_py)
+    }
+
+    /// Start listening for the wake word.
+    ///
+    /// Naming a sound has the library play it on detection and hold off
+    /// counting silence until it has finished.
+    #[pyo3(signature = (alert = None))]
+    fn enable_wake(&self, alert: Option<&str>) -> PyResult<()> {
+        self.core.enable_wake(alert).map_err(to_py)
+    }
+
+    fn disable_wake(&self) -> PyResult<()> {
+        self.core.disable_wake().map_err(to_py)
+    }
+
+    #[getter]
+    fn is_wake_enabled(&self) -> bool {
+        self.core.is_wake_enabled()
+    }
+
+    #[getter]
+    fn wake_alert(&self) -> Option<String> {
+        self.core.wake_alert()
+    }
+
+    /// Forget what has been heard, so a fresh utterance is needed.
+    fn reset_wake(&self) -> PyResult<()> {
+        self.core.reset_wake().map_err(to_py)
+    }
+
+    fn set_wake_threshold(&self, value: f32) -> PyResult<()> {
+        self.core.set_wake_threshold(value).map_err(to_py)
+    }
+
     // ── speech detection ─────────────────────────────────────────────
 
     fn enable_speech(&self) -> PyResult<()> {
@@ -452,7 +500,7 @@ impl EdgeEar {
     fn register_sound(
         &self,
         id: &str,
-        path: Option<std::path::PathBuf>,
+        path: Option<PathBuf>,
         pcm: Option<Vec<i16>>,
         sample_rate: u32,
         channels: u16,

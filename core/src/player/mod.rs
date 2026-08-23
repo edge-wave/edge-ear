@@ -40,9 +40,15 @@ pub struct Player {
     state: Arc<Mutex<State>>,
     wake: Arc<Condvar>,
     stop: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
+    worker: Mutex<Option<JoinHandle<()>>>,
     format: AudioFormat,
+    /// Told when a sound ends on its own, before the application hears
+    /// about it. This is how the alert gate is released.
+    on_finished: Finished,
 }
+
+/// Told when a sound ends on its own.
+type Finished = Arc<Mutex<Option<Box<dyn Fn(&str) + Send + Sync>>>>;
 
 impl Player {
     pub fn start(stream: Box<dyn OutputStream>, dispatcher: Arc<Dispatcher>) -> Result<Self> {
@@ -50,14 +56,16 @@ impl Player {
         let state = Arc::new(Mutex::new(State::default()));
         let wake = Arc::new(Condvar::new());
         let stop = Arc::new(AtomicBool::new(false));
+        let finished: Finished = Arc::new(Mutex::new(None));
 
         let worker = {
             let state = Arc::clone(&state);
             let wake = Arc::clone(&wake);
             let stop = Arc::clone(&stop);
+            let hooks = Arc::clone(&finished);
             thread::Builder::new()
                 .name("edge-ear-player".to_string())
-                .spawn(move || run(stream, state, wake, stop, dispatcher))
+                .spawn(move || run(stream, state, wake, stop, dispatcher, hooks))
                 .map_err(|e| Error::Backend {
                     device: crate::config::Device::Output,
                     reason: format!("player thread would not start: {e}"),
@@ -68,8 +76,9 @@ impl Player {
             state,
             wake,
             stop,
-            worker: Some(worker),
+            worker: Mutex::new(Some(worker)),
             format,
+            on_finished: finished,
         })
     }
 
@@ -104,10 +113,16 @@ impl Player {
         self.lock().current.is_some()
     }
 
-    pub fn shutdown(&mut self) {
+    /// Told when a sound ends on its own. Replaces any earlier one.
+    pub fn on_finished(&self, hook: impl Fn(&str) + Send + Sync + 'static) {
+        *self.on_finished.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(hook));
+    }
+
+    pub fn shutdown(&self) {
         self.stop.store(true, Ordering::Relaxed);
         self.wake.notify_all();
-        if let Some(worker) = self.worker.take() {
+        let worker = self.worker.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(worker) = worker {
             let _ = worker.join();
         }
     }
@@ -129,6 +144,7 @@ fn run(
     wake: Arc<Condvar>,
     stop: Arc<AtomicBool>,
     dispatcher: Arc<Dispatcher>,
+    hooks: Finished,
 ) {
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -197,6 +213,9 @@ fn run(
         // Only a sound that ran to its own end is reported. A sound the
         // application stopped never gets here.
         if let Some(id) = ended_id {
+            if let Some(hook) = hooks.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                hook(&id);
+            }
             dispatcher.emit(Event::SoundFinished { id });
         }
     }

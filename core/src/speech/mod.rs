@@ -359,7 +359,7 @@ pub struct SpeechThread {
     /// True while a recording is collecting. Read by the handle, which
     /// refuses to change the rules a running recording is following.
     open: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
+    worker: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl SpeechThread {
@@ -394,7 +394,7 @@ impl SpeechThread {
             control,
             stop,
             open,
-            worker: Some(worker),
+            worker: Mutex::new(Some(worker)),
         })
     }
 
@@ -423,9 +423,10 @@ impl SpeechThread {
         self.lock().limits = limits;
     }
 
-    pub fn shutdown(&mut self) {
+    pub fn shutdown(&self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(worker) = self.worker.take() {
+        let worker = self.worker.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(worker) = worker {
             let _ = worker.join();
         }
     }

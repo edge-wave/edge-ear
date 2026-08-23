@@ -60,22 +60,24 @@ struct Inner {
     /// The one owner of the speaker. Opened when the first sound is
     /// wanted, not at start, so an application that never plays
     /// anything never claims the device.
-    player: Option<Player>,
-    sounds: Registry,
+    player: Option<Arc<Player>>,
+    sounds: Arc<Mutex<Registry>>,
     /// Runs while capture runs. Detection happens on its own thread, so
     /// inference never stalls the audio path.
-    speech: Option<SpeechThread>,
+    speech: Option<Arc<SpeechThread>>,
     /// Which detectors the application has asked for. Kept apart from
     /// the consumers because a detector may be switched on before there
     /// is anything to switch, and that intent must survive until start.
     wake_wanted: bool,
     speech_wanted: bool,
     /// Runs while capture runs, once the models have been supplied.
-    wake: Option<WakeThread>,
+    wake: Option<Arc<WakeThread>>,
     /// Where the three models live. The application supplies all of
     /// them; this library ships no wake word and no way to make one.
     wake_models: Option<(std::path::PathBuf, std::path::PathBuf)>,
     wake_word: Option<std::path::PathBuf>,
+    /// Played when the wake word is heard, if the application named one.
+    alert: Option<String>,
 }
 
 impl Inner {
@@ -118,13 +120,14 @@ impl EdgeEar {
                 capture: None,
                 consumers: Vec::new(),
                 player: None,
-                sounds: Registry::new(),
+                sounds: Arc::new(Mutex::new(Registry::new())),
                 speech: None,
                 wake_wanted: false,
                 speech_wanted: false,
                 wake: None,
                 wake_models: None,
                 wake_word: None,
+                alert: None,
             }),
             dispatcher: Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY)),
             backend: Mutex::new(backend),
@@ -157,12 +160,24 @@ impl EdgeEar {
             .find(|c| c.kind == ConsumerKind::Speech)
             .map(|c| Arc::clone(&c.ring))
             .expect("a speech consumer is always built");
-        let speech = SpeechThread::start(
+        let speech = Arc::new(SpeechThread::start(
             speech_ring,
             inner.config.fixed.speech_format,
             inner.config.tunable.clone(),
             Arc::clone(&self.dispatcher),
-        )?;
+        )?);
+
+        // Releasing the alert gate happens here rather than in the
+        // application's handler, so a slow handler cannot let the tail
+        // of the alert be counted as speech.
+        if let (Some(player), Some(alert)) = (inner.player.as_ref(), inner.alert.clone()) {
+            let speech = Arc::clone(&speech);
+            player.on_finished(move |id| {
+                if id == alert {
+                    speech.start_counting();
+                }
+            });
+        }
 
         let wake = match (&inner.wake_models, &inner.wake_word) {
             (Some((spectrogram, features)), Some(word)) => {
@@ -178,11 +193,48 @@ impl EdgeEar {
                     .find(|c| c.kind == ConsumerKind::Wake)
                     .map(|c| Arc::clone(&c.ring))
                     .expect("a wake consumer is always built");
-                Some(WakeThread::start(
+
+                // What happens the moment the wake word is heard.
+                let on_wake = {
+                    let speech = Arc::clone(&speech);
+                    let player = inner.player.clone();
+                    let alert = inner.alert.clone();
+                    let sounds = Arc::clone(&inner.sounds);
+                    let limits = inner.config.tunable.clone();
+                    Box::new(move || {
+                        speech.set_limits(limits.clone());
+                        match (&player, &alert) {
+                            // With an alert, the recording collects
+                            // audio at once but does not count silence
+                            // until the sound has finished.
+                            (Some(player), Some(alert)) => {
+                                let found = sounds
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .get(alert)
+                                    .cloned();
+                                match found {
+                                    Ok(sound) => {
+                                        player.play(sound, false);
+                                        speech.open_recording(Vec::new(), false);
+                                    }
+                                    // The alert was released since it
+                                    // was named. Nothing to wait for.
+                                    Err(_) => speech.open_recording(Vec::new(), true),
+                                }
+                            }
+                            // Without one there is nothing to wait for.
+                            _ => speech.open_recording(Vec::new(), true),
+                        }
+                    }) as wake::OnWake
+                };
+
+                Some(Arc::new(WakeThread::start(
                     detector,
                     ring,
                     Arc::clone(&self.dispatcher),
-                )?)
+                    on_wake,
+                )?))
             }
             _ => None,
         };
@@ -207,10 +259,10 @@ impl EdgeEar {
                 if let Some(mut capture) = inner.capture.take() {
                     capture.stop();
                 }
-                if let Some(mut speech) = inner.speech.take() {
+                if let Some(speech) = inner.speech.take() {
                     speech.shutdown();
                 }
-                if let Some(mut wake) = inner.wake.take() {
+                if let Some(wake) = inner.wake.take() {
                     wake.shutdown();
                 }
                 inner.consumers.clear();
@@ -279,16 +331,38 @@ impl EdgeEar {
 
     /// Start listening for the wake word.
     ///
+    /// Naming a sound has the library play it on detection and hold
+    /// off counting silence until it has finished, so the tail of the
+    /// sound is never mistaken for someone speaking. Without one, the
+    /// recording starts counting straight away.
+    ///
     /// Works before or after capture starts. Without a model loaded it
     /// says so rather than listening for nothing.
-    pub fn enable_wake(&self) -> Result<()> {
+    pub fn enable_wake(&self, alert: Option<&str>) -> Result<()> {
         {
-            let inner = self.alive_mut()?;
+            let mut inner = self.alive_mut()?;
             if inner.wake_word.is_none() {
                 return Err(Error::NoWakeModel);
             }
+            if let Some(alert) = alert {
+                // Named now so a missing sound is reported here, not
+                // silently when the wake word is finally heard.
+                inner
+                    .sounds
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(alert)?;
+                inner.alert = Some(alert.to_string());
+            } else {
+                inner.alert = None;
+            }
         }
         self.set_consumer(ConsumerKind::Wake, true)
+    }
+
+    /// The sound played when the wake word is heard, if any.
+    pub fn wake_alert(&self) -> Option<String> {
+        self.lock().alert.clone()
     }
 
     pub fn disable_wake(&self) -> Result<()> {
@@ -417,16 +491,19 @@ impl EdgeEar {
     /// arrives at run time be played without a restart.
     pub fn register_sound(&self, id: &str, source: SoundSource, volume: f32) -> Result<()> {
         let output = self.ensure_player()?;
-        let mut inner = self.alive_mut()?;
+        let inner = self.alive_mut()?;
         inner
             .sounds
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .register(id.to_string(), source, volume, output)
     }
 
     /// Forget a sound and release the audio it held.
     pub fn unregister_sound(&self, id: &str) -> Result<()> {
-        let mut inner = self.alive_mut()?;
-        inner.sounds.unregister(id)
+        let inner = self.alive_mut()?;
+        let mut sounds = inner.sounds.lock().unwrap_or_else(|e| e.into_inner());
+        sounds.unregister(id)
     }
 
     /// Play a registered sound, optionally repeating until stopped.
@@ -434,7 +511,12 @@ impl EdgeEar {
     pub fn play_sound(&self, id: &str, repeat: bool) -> Result<()> {
         self.ensure_player()?;
         let inner = self.alive_mut()?;
-        let sound = inner.sounds.get(id)?.clone();
+        let sound = inner
+            .sounds
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)?
+            .clone();
         let player = inner
             .player
             .as_ref()
@@ -477,7 +559,7 @@ impl EdgeEar {
             }
         };
         let stream = self.backend_lock().open_output(&request)?;
-        let player = Player::start(stream, Arc::clone(&self.dispatcher))?;
+        let player = Arc::new(Player::start(stream, Arc::clone(&self.dispatcher))?);
         let format = player.format();
 
         let mut inner = self.alive_mut()?;
@@ -511,17 +593,21 @@ impl EdgeEar {
             if let Some(mut capture) = inner.capture.take() {
                 capture.stop();
             }
-            if let Some(mut speech) = inner.speech.take() {
+            if let Some(speech) = inner.speech.take() {
                 speech.shutdown();
             }
-            if let Some(mut wake) = inner.wake.take() {
+            if let Some(wake) = inner.wake.take() {
                 wake.shutdown();
             }
             inner.consumers.clear();
-            if let Some(mut player) = inner.player.take() {
+            if let Some(player) = inner.player.take() {
                 player.shutdown();
             }
-            inner.sounds.clear();
+            inner
+                .sounds
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
         }
         self.dispatcher.shutdown();
     }
