@@ -10,8 +10,11 @@ use edge_ear_core::backend::fake::FakeBackend;
 use edge_ear_core::config::{AudioFormat, SampleType, Target};
 use edge_ear_core::error::Error;
 
+/// Paced like a real device. A device that hands blocks over as fast
+/// as the machine allows would overflow the queue between two calls,
+/// and nothing here is asking about that.
 fn ear() -> EdgeEar {
-    EdgeEar::with_backend(Box::new(FakeBackend::silent())).expect("handle")
+    EdgeEar::with_backend(Box::new(FakeBackend::paced())).expect("handle")
 }
 
 #[test]
