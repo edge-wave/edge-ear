@@ -16,11 +16,13 @@ pub mod events;
 pub(crate) mod capture;
 pub(crate) mod player;
 pub(crate) mod speech;
+pub(crate) mod wake;
 
 // The few types from those modules that an application does touch.
 pub use capture::{AudioChunk, Samples};
 pub use player::registry::{SoundId, SoundSource};
 
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use std::time::Duration;
@@ -34,6 +36,8 @@ use events::dispatch::{DEFAULT_QUEUE_CAPACITY, Dispatcher};
 use player::Player;
 use player::registry::Registry;
 use speech::SpeechThread;
+use wake::model::WakeModel;
+use wake::{Detector as WakeDetector, WakeThread};
 
 /// Where a handle is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +70,12 @@ struct Inner {
     /// is anything to switch, and that intent must survive until start.
     wake_wanted: bool,
     speech_wanted: bool,
+    /// Runs while capture runs, once the models have been supplied.
+    wake: Option<WakeThread>,
+    /// Where the three models live. The application supplies all of
+    /// them; this library ships no wake word and no way to make one.
+    wake_models: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    wake_word: Option<std::path::PathBuf>,
 }
 
 impl Inner {
@@ -112,6 +122,9 @@ impl EdgeEar {
                 speech: None,
                 wake_wanted: false,
                 speech_wanted: false,
+                wake: None,
+                wake_models: None,
+                wake_word: None,
             }),
             dispatcher: Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY)),
             backend: Mutex::new(backend),
@@ -151,9 +164,33 @@ impl EdgeEar {
             Arc::clone(&self.dispatcher),
         )?;
 
+        let wake = match (&inner.wake_models, &inner.wake_word) {
+            (Some((spectrogram, features)), Some(word)) => {
+                let mut model = WakeModel::new(spectrogram, features)?;
+                model.load_word(word)?;
+                let detector = WakeDetector::new(
+                    model,
+                    inner.config.tunable.wake_threshold,
+                    inner.config.tunable.wake_settle_frames,
+                );
+                let ring = consumers
+                    .iter()
+                    .find(|c| c.kind == ConsumerKind::Wake)
+                    .map(|c| Arc::clone(&c.ring))
+                    .expect("a wake consumer is always built");
+                Some(WakeThread::start(
+                    detector,
+                    ring,
+                    Arc::clone(&self.dispatcher),
+                )?)
+            }
+            _ => None,
+        };
+
         inner.consumers = consumers;
         inner.capture = Some(capture);
         inner.speech = Some(speech);
+        inner.wake = wake;
         inner.state = HandleState::Running;
         Ok(())
     }
@@ -172,6 +209,9 @@ impl EdgeEar {
                 }
                 if let Some(mut speech) = inner.speech.take() {
                     speech.shutdown();
+                }
+                if let Some(mut wake) = inner.wake.take() {
+                    wake.shutdown();
                 }
                 inner.consumers.clear();
                 Ok(())
@@ -205,6 +245,67 @@ impl EdgeEar {
         let mut chunk = taken.item;
         chunk.dropped_before = taken.dropped_before;
         Ok(chunk)
+    }
+
+    // ── wake word ────────────────────────────────────────────────────
+
+    /// Supply the two models every wake word shares.
+    ///
+    /// Neither knows any word. This library ships neither, because the
+    /// terms they come under are not the terms this library is offered
+    /// under.
+    pub fn load_wake_features(&self, spectrogram: &Path, features: &Path) -> Result<()> {
+        let mut inner = self.stopped_only("the wake word models")?;
+        // Checked now rather than at the next start, so a wrong path is
+        // reported where it was given.
+        WakeModel::new(spectrogram, features)?;
+        inner.wake_models = Some((spectrogram.to_path_buf(), features.to_path_buf()));
+        Ok(())
+    }
+
+    /// Supply the model for the phrase to listen for.
+    ///
+    /// Its shape is checked here. Tensor names are not part of the
+    /// contract: every model from the training pipeline has its own,
+    /// and any of them works.
+    pub fn load_wake_model(&self, path: &Path) -> Result<()> {
+        let mut inner = self.stopped_only("the wake word model")?;
+        let (spectrogram, features) = inner.wake_models.clone().ok_or(Error::NoWakeModel)?;
+        let mut model = WakeModel::new(&spectrogram, &features)?;
+        model.load_word(path)?;
+        inner.wake_word = Some(path.to_path_buf());
+        Ok(())
+    }
+
+    /// Start listening for the wake word.
+    ///
+    /// Works before or after capture starts. Without a model loaded it
+    /// says so rather than listening for nothing.
+    pub fn enable_wake(&self) -> Result<()> {
+        {
+            let inner = self.alive_mut()?;
+            if inner.wake_word.is_none() {
+                return Err(Error::NoWakeModel);
+            }
+        }
+        self.set_consumer(ConsumerKind::Wake, true)
+    }
+
+    pub fn disable_wake(&self) -> Result<()> {
+        self.set_consumer(ConsumerKind::Wake, false)
+    }
+
+    pub fn is_wake_enabled(&self) -> bool {
+        self.lock().wake_wanted
+    }
+
+    /// Forget what has been heard, so a fresh utterance is needed.
+    pub fn reset_wake(&self) -> Result<()> {
+        let inner = self.alive_mut()?;
+        if let Some(wake) = inner.wake.as_ref() {
+            wake.reset();
+        }
+        Ok(())
     }
 
     // ── speech detection ─────────────────────────────────────────────
@@ -413,6 +514,9 @@ impl EdgeEar {
             if let Some(mut speech) = inner.speech.take() {
                 speech.shutdown();
             }
+            if let Some(mut wake) = inner.wake.take() {
+                wake.shutdown();
+            }
             inner.consumers.clear();
             if let Some(mut player) = inner.player.take() {
                 player.shutdown();
@@ -485,7 +589,12 @@ impl EdgeEar {
     }
 
     pub fn set_wake_threshold(&self, value: f32) -> Result<()> {
-        self.tune(|c| c.tunable.wake_threshold = value)
+        self.tune(|c| c.tunable.wake_threshold = value)?;
+        let inner = self.lock();
+        if let Some(wake) = inner.wake.as_ref() {
+            wake.set_threshold(value);
+        }
+        Ok(())
     }
 
     /// How readily audio counts as speech.
