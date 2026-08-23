@@ -44,6 +44,10 @@ Set these to wait for a wake word rather than recording at once:
   EDGE_EAR_SILENCE         seconds of quiet that end a recording.
                            default 0.8
 
+The wake score is shown beside the level meter as it is heard, whether
+or not it reached the threshold. Watch it while saying the wake word to
+see how close the model comes.
+
 For example:
 
   EDGE_EAR_WAKE_DIR=~/models EDGE_EAR_WAKE_THRESHOLD=0.35 \\
@@ -170,7 +174,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             last_drawn = Instant::now();
             loudest = loudest.max(rms(samples));
-            print!("\r  {}", meter(samples));
+            // The score is shown whether or not it counted, so a wake
+            // word that nearly made it can be told from one the model
+            // never noticed at all.
+            let score = match ear.wake_score() {
+                Some(score) => format!("  wake {}", score_bar(score)),
+                None if waiting_for_wake => "  wake  listening".to_string(),
+                None => String::new(),
+            };
+            print!("\r  {}{score}", meter(samples));
             let _ = std::io::stdout().flush();
         }
     }
@@ -252,6 +264,18 @@ fn rms(samples: &[i16]) -> f64 {
     }
     let sum: f64 = samples.iter().map(|s| (*s as f64).powi(2)).sum();
     (sum / samples.len() as f64).sqrt()
+}
+
+/// The wake word score, with a mark at how sure it must be.
+fn score_bar(score: f32) -> String {
+    let width = 12;
+    let filled = ((score.clamp(0.0, 1.0)) * width as f32) as usize;
+    format!(
+        "{:.3} [{}{}]",
+        score,
+        "=".repeat(filled),
+        " ".repeat(width - filled)
+    )
 }
 
 fn meter(samples: &[i16]) -> String {

@@ -1,6 +1,6 @@
 pub mod model;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -40,25 +40,28 @@ impl Detector {
         self.threshold = threshold;
     }
 
-    /// Feed one frame. Gives the score when it counts as a detection.
-    pub fn push(&mut self, frame: &[i16]) -> Result<Option<f32>> {
+    /// Feed one frame.
+    ///
+    /// The first value is the score, whenever the pipeline has heard
+    /// enough to give one. The second says it counted as a detection.
+    pub fn push(&mut self, frame: &[i16]) -> Result<(Option<f32>, bool)> {
         let Some(score) = self.model.push(frame)? else {
-            return Ok(None);
+            return Ok((None, false));
         };
 
         if self.settling > 0 {
             self.settling -= 1;
-            return Ok(None);
+            return Ok((Some(score), false));
         }
         if score < self.threshold {
-            return Ok(None);
+            return Ok((Some(score), false));
         }
 
         // Heard it. Look away for a while so the same utterance is not
         // reported again as it drains out of the pipeline.
         self.model.reset();
         self.settling = self.settle_frames;
-        Ok(Some(score))
+        Ok((Some(score), true))
     }
 
     /// Start again from nothing.
@@ -80,10 +83,18 @@ struct Control {
 /// slow application handler cannot delay either.
 pub type OnWake = Box<dyn Fn() + Send>;
 
+/// Stands for "nothing has been scored yet". Every real score is a
+/// number between zero and one, so no score can collide with it.
+const NO_SCORE: u32 = u32::MAX;
+
 /// Runs wake word detection away from the capture thread.
 pub struct WakeThread {
     control: Arc<Mutex<Control>>,
     stop: Arc<AtomicBool>,
+    /// The most recent score, whether or not it counted as a detection.
+    /// An application tuning how sure the detector must be needs to see
+    /// the ones that fell short.
+    last_score: Arc<AtomicU32>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -96,13 +107,15 @@ impl WakeThread {
     ) -> Result<Self> {
         let control = Arc::new(Mutex::new(Control::default()));
         let stop = Arc::new(AtomicBool::new(false));
+        let last_score = Arc::new(AtomicU32::new(NO_SCORE));
 
         let worker = {
             let control = Arc::clone(&control);
             let stop = Arc::clone(&stop);
+            let scores = Arc::clone(&last_score);
             thread::Builder::new()
                 .name("edge-ear-wake".to_string())
-                .spawn(move || run(detector, ring, control, stop, dispatcher, on_wake))
+                .spawn(move || run(detector, ring, control, stop, scores, dispatcher, on_wake))
                 .map_err(|e| Error::Backend {
                     device: Device::Input,
                     reason: format!("wake thread would not start: {e}"),
@@ -112,6 +125,7 @@ impl WakeThread {
         Ok(Self {
             control,
             stop,
+            last_score,
             worker: Mutex::new(Some(worker)),
         })
     }
@@ -123,6 +137,15 @@ impl WakeThread {
     /// Forget what has been heard, so a fresh utterance is needed.
     pub fn reset(&self) {
         self.lock().reset = true;
+    }
+
+    /// The most recent score, or nothing until the pipeline has heard
+    /// enough to give one.
+    pub fn last_score(&self) -> Option<f32> {
+        match self.last_score.load(Ordering::Relaxed) {
+            NO_SCORE => None,
+            bits => Some(f32::from_bits(bits)),
+        }
     }
 
     pub fn shutdown(&self) {
@@ -149,6 +172,7 @@ fn run(
     ring: Arc<Ring<AudioChunk>>,
     control: Arc<Mutex<Control>>,
     stop: Arc<AtomicBool>,
+    scores: Arc<AtomicU32>,
     dispatcher: Arc<Dispatcher>,
     on_wake: OnWake,
 ) {
@@ -177,13 +201,19 @@ fn run(
         };
 
         match detector.push(samples) {
-            Ok(Some(score)) => {
-                // Act first, tell the application second. The alert and
-                // the recording must not wait on a slow handler.
-                on_wake();
-                dispatcher.emit(Event::WakeDetected { score });
+            Ok((score, detected)) => {
+                if let Some(score) = score {
+                    scores.store(score.to_bits(), Ordering::Relaxed);
+                }
+                if detected {
+                    // Act first, tell the application second. The alert
+                    // and the recording must not wait on a handler.
+                    on_wake();
+                    dispatcher.emit(Event::WakeDetected {
+                        score: score.unwrap_or(0.0),
+                    });
+                }
             }
-            Ok(None) => {}
             Err(e) => dispatcher.emit(Event::DeviceError {
                 device: Device::Input,
                 message: e.to_string(),
