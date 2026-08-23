@@ -684,6 +684,16 @@ impl EdgeEar {
         Ok(())
     }
 
+    /// How long the detector looks away after hearing the wake word,
+    /// counted in frames of 80 ms.
+    ///
+    /// It has to be long enough that the utterance just heard is not
+    /// heard again on its way out of the pipeline. Longer than that is
+    /// time spent unable to hear the next one.
+    pub fn set_wake_settle_frames(&self, frames: u32) -> Result<()> {
+        self.tune(|c| c.tunable.wake_settle_frames = frames)
+    }
+
     pub fn set_wake_threshold(&self, value: f32) -> Result<()> {
         self.tune(|c| c.tunable.wake_threshold = value)?;
         let inner = self.lock();

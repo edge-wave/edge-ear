@@ -465,6 +465,11 @@ impl EdgeEar {
         self.core.set_wake_threshold(value).map_err(to_py)
     }
 
+    /// Frames of 80 ms to look away for after hearing the wake word.
+    fn set_wake_settle_frames(&self, frames: u32) -> PyResult<()> {
+        self.core.set_wake_settle_frames(frames).map_err(to_py)
+    }
+
     // ── speech detection ─────────────────────────────────────────────
 
     fn enable_speech(&self) -> PyResult<()> {
