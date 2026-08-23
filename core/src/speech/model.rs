@@ -210,6 +210,32 @@ mod silero_tests {
 
     /// Loads the bundled model, so it is slower than the rest and kept
     /// out of the normal run.
+    /// The shape of the bundled model, checked directly.
+    ///
+    /// Other projects ship a model under a similar name with a
+    /// different shape: two state tensors instead of one, wider
+    /// windows, and no sample rate input. Swapping one in would break
+    /// this library in ways the behaviour tests would not name. This
+    /// says exactly what the file must look like.
+    #[test]
+    #[ignore]
+    fn the_bundled_model_has_the_shape_this_code_expects() {
+        let session = ort::session::Session::builder()
+            .and_then(|mut b| b.commit_from_memory(include_bytes!("../../assets/silero_vad.onnx")))
+            .expect("the bundled model");
+
+        let inputs: Vec<&str> = session.inputs().iter().map(|o| o.name()).collect();
+        let outputs: Vec<&str> = session.outputs().iter().map(|o| o.name()).collect();
+        println!("inputs {inputs:?}, outputs {outputs:?}");
+
+        assert_eq!(
+            inputs,
+            vec!["input", "state", "sr"],
+            "one state tensor and a sample rate input, not a split state"
+        );
+        assert_eq!(outputs, vec!["output", "stateN"]);
+    }
+
     #[test]
     #[ignore]
     fn the_bundled_model_loads_and_answers() {
