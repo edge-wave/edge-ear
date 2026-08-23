@@ -47,7 +47,39 @@ what actually identify it.
 
 Not shipped yet. When they are, they come from openWakeWord
 (https://github.com/dscripka/openWakeWord) under the Apache License
-2.0, and its NOTICE and attribution terms will be recorded here.
+2.0, and its attribution terms will be recorded here alongside a
+checksum and the interface the code expects.
 
 The wake word itself is never shipped. An application supplies the
 model for the phrase it wants.
+
+## Code that travels in the built library
+
+These are compiled in, so anything built from this repository carries
+them. Their own licence text ships with each crate.
+
+| Crate       | Licence            | What it does           |
+|-------------|--------------------|------------------------|
+| `cpal`      | Apache-2.0         | Reaching the devices   |
+| `symphonia` | MPL-2.0            | Reading sound files    |
+| `rubato`    | MIT OR Apache-2.0  | Changing sample rate   |
+| `ort`       | MIT OR Apache-2.0  | Running the model      |
+| `thiserror` | MIT OR Apache-2.0  | Error types            |
+| `pyo3`      | MIT OR Apache-2.0  | The Python binding     |
+
+Two of these ask for something when a built library is handed on.
+
+**cpal**, under the Apache License 2.0, asks that the licence travel
+with what is distributed and that changes to its files be marked. This
+project makes no changes to it. It carries no NOTICE file, so there is
+none to pass along.
+
+**symphonia**, under the Mozilla Public License 2.0, asks that anyone
+given a built copy be told how to get the source of the MPL-covered
+files. That source is at https://github.com/pdeljanov/Symphonia. The
+licence covers those files alone; it places no condition on the rest of
+this project.
+
+Nothing here reaches a network, at build time or after. The only
+exception is building `ort`, which fetches the ONNX Runtime binaries it
+links against.
