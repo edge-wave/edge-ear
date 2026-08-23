@@ -15,6 +15,7 @@ pub mod events;
 // compiler holds, rather than one the documentation asks for.
 pub(crate) mod capture;
 pub(crate) mod player;
+pub(crate) mod speech;
 
 // The few types from those modules that an application does touch.
 pub use capture::{AudioChunk, Samples};
@@ -32,6 +33,7 @@ use events::Event;
 use events::dispatch::{DEFAULT_QUEUE_CAPACITY, Dispatcher};
 use player::Player;
 use player::registry::Registry;
+use speech::SpeechThread;
 
 /// Where a handle is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +58,14 @@ struct Inner {
     /// anything never claims the device.
     player: Option<Player>,
     sounds: Registry,
+    /// Runs while capture runs. Detection happens on its own thread, so
+    /// inference never stalls the audio path.
+    speech: Option<SpeechThread>,
+    /// Which detectors the application has asked for. Kept apart from
+    /// the consumers because a detector may be switched on before there
+    /// is anything to switch, and that intent must survive until start.
+    wake_wanted: bool,
+    speech_wanted: bool,
 }
 
 impl Inner {
@@ -99,6 +109,9 @@ impl EdgeEar {
                 consumers: Vec::new(),
                 player: None,
                 sounds: Registry::new(),
+                speech: None,
+                wake_wanted: false,
+                speech_wanted: false,
             }),
             dispatcher: Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY)),
             backend: Mutex::new(backend),
@@ -122,12 +135,25 @@ impl EdgeEar {
         };
         let stream = self.backend_lock().open_input(&request)?;
 
-        let consumers = build_consumers(&inner.config);
+        let consumers = build_consumers(&inner.config, inner.wake_wanted, inner.speech_wanted);
         let capture =
             CaptureThread::start(stream, consumers.clone(), Arc::clone(&self.dispatcher))?;
 
+        let speech_ring = consumers
+            .iter()
+            .find(|c| c.kind == ConsumerKind::Speech)
+            .map(|c| Arc::clone(&c.ring))
+            .expect("a speech consumer is always built");
+        let speech = SpeechThread::start(
+            speech_ring,
+            inner.config.fixed.speech_format,
+            inner.config.tunable.clone(),
+            Arc::clone(&self.dispatcher),
+        )?;
+
         inner.consumers = consumers;
         inner.capture = Some(capture);
+        inner.speech = Some(speech);
         inner.state = HandleState::Running;
         Ok(())
     }
@@ -143,6 +169,9 @@ impl EdgeEar {
                 // waiting on a read rather than leaving them blocked.
                 if let Some(mut capture) = inner.capture.take() {
                     capture.stop();
+                }
+                if let Some(mut speech) = inner.speech.take() {
+                    speech.shutdown();
                 }
                 inner.consumers.clear();
                 Ok(())
@@ -176,6 +205,106 @@ impl EdgeEar {
         let mut chunk = taken.item;
         chunk.dropped_before = taken.dropped_before;
         Ok(chunk)
+    }
+
+    // ── speech detection ─────────────────────────────────────────────
+
+    /// Start listening for the end of speech.
+    ///
+    /// Works before or after capture starts, and takes effect on the
+    /// next block of audio.
+    pub fn enable_speech(&self) -> Result<()> {
+        self.set_consumer(ConsumerKind::Speech, true)
+    }
+
+    pub fn disable_speech(&self) -> Result<()> {
+        self.set_consumer(ConsumerKind::Speech, false)
+    }
+
+    pub fn is_speech_enabled(&self) -> bool {
+        self.lock().speech_wanted
+    }
+
+    /// Open a recording now, without waiting for a wake word.
+    ///
+    /// One `SpeechEnded` follows, carrying the audio and why it ended.
+    pub fn start_recording(&self) -> Result<()> {
+        let inner = self.running_only()?;
+        let speech = inner.speech.as_ref().ok_or(Error::NotRunning)?;
+        speech.set_limits(inner.config.tunable.clone());
+
+        // Pre-roll reaches back into audio already collected. Off by
+        // default, because that stretch may hold an alert sound.
+        let pre_roll = self.recent_audio(&inner);
+        speech.open_recording(pre_roll, true);
+        Ok(())
+    }
+
+    /// End the open recording. One `SpeechEnded` follows, saying it was
+    /// stopped rather than that the speaker went quiet.
+    pub fn stop_recording(&self) -> Result<()> {
+        let inner = self.running_only()?;
+        inner
+            .speech
+            .as_ref()
+            .ok_or(Error::NotRunning)?
+            .stop_recording();
+        Ok(())
+    }
+
+    /// Audio from just before now, as much as pre-roll asks for and the
+    /// history holds. A history shorter than that yields what exists.
+    fn recent_audio(&self, inner: &Inner) -> Vec<i16> {
+        let wanted = inner.config.tunable.pre_roll;
+        if wanted.is_zero() {
+            return Vec::new();
+        }
+        let Some(consumer) = inner.consumer(ConsumerKind::Speech) else {
+            return Vec::new();
+        };
+        let format = consumer.format;
+        let per_chunk_secs = |chunk: &AudioChunk| chunk.duration().as_secs_f64();
+
+        let mut held = consumer.ring.snapshot();
+        let mut taken: Vec<i16> = Vec::new();
+        let mut seconds = 0.0;
+        while let Some(chunk) = held.pop() {
+            if seconds >= wanted.as_secs_f64() {
+                break;
+            }
+            seconds += per_chunk_secs(&chunk);
+            if let Some(samples) = chunk.samples.as_i16() {
+                let mut front = samples.to_vec();
+                front.extend_from_slice(&taken);
+                taken = front;
+            }
+        }
+        let _ = format;
+        taken
+    }
+
+    /// Turn one consumer on or off. Takes effect on the next block and
+    /// disturbs no other consumer.
+    fn set_consumer(&self, kind: ConsumerKind, on: bool) -> Result<()> {
+        let mut inner = self.alive_mut()?;
+        match kind {
+            ConsumerKind::Wake => inner.wake_wanted = on,
+            ConsumerKind::Speech => inner.speech_wanted = on,
+            ConsumerKind::Read => {}
+        }
+        if let Some(consumer) = inner.consumer(kind) {
+            consumer.set_enabled(on);
+        }
+        Ok(())
+    }
+
+    fn running_only(&self) -> Result<MutexGuard<'_, Inner>> {
+        let inner = self.lock();
+        match inner.state {
+            HandleState::Destroyed => Err(Error::Destroyed),
+            HandleState::Created => Err(Error::NotRunning),
+            HandleState::Running => Ok(inner),
+        }
     }
 
     // ── sound playback ───────────────────────────────────────────────
@@ -280,6 +409,9 @@ impl EdgeEar {
             inner.state = HandleState::Destroyed;
             if let Some(mut capture) = inner.capture.take() {
                 capture.stop();
+            }
+            if let Some(mut speech) = inner.speech.take() {
+                speech.shutdown();
             }
             inner.consumers.clear();
             if let Some(mut player) = inner.player.take() {
@@ -435,7 +567,7 @@ impl Drop for EdgeEar {
 
 /// The three consumers, each with its own queue, format, and frame
 /// size. They are built together but share nothing.
-fn build_consumers(config: &Config) -> Vec<Consumer> {
+fn build_consumers(config: &Config, wake_wanted: bool, speech_wanted: bool) -> Vec<Consumer> {
     let fixed = &config.fixed;
     let capacity = fixed.ring_capacity;
 
@@ -448,14 +580,14 @@ fn build_consumers(config: &Config) -> Vec<Consumer> {
             fixed.wake_format,
             fixed.wake_format.frame_samples(Target::Wake),
             capacity,
-            false,
+            wake_wanted,
         ),
         Consumer::new(
             ConsumerKind::Speech,
             fixed.speech_format,
             fixed.speech_format.frame_samples(Target::Speech),
             capacity,
-            false,
+            speech_wanted,
         ),
     ]
 }
