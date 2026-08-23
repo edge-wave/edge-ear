@@ -235,3 +235,209 @@ fn run<M: WakeSource>(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capture::{AudioChunk, Samples};
+    use crate::config::AudioFormat;
+    use crate::events::dispatch::DEFAULT_QUEUE_CAPACITY;
+    use crate::wake::model::ScriptedWake;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Instant;
+
+    const FRAME: usize = 1280;
+
+    fn detector(script: ScriptedWake, threshold: f32, settle: u32) -> Detector<ScriptedWake> {
+        Detector::new(script, threshold, settle)
+    }
+
+    fn push(d: &mut Detector<ScriptedWake>) -> (Option<f32>, bool) {
+        d.push(&[100; FRAME]).unwrap()
+    }
+
+    fn chunk() -> AudioChunk {
+        AudioChunk::new(
+            Samples::I16(vec![100; FRAME]),
+            AudioFormat::mono_16k(),
+            Instant::now(),
+        )
+    }
+
+    fn wait_until(mut done: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if done() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    #[test]
+    fn a_score_over_the_threshold_counts() {
+        let mut d = detector(ScriptedWake::heard_after(2, 0.9), 0.5, 20);
+        assert_eq!(push(&mut d), (Some(0.05), false));
+        assert_eq!(push(&mut d), (Some(0.05), false));
+        assert_eq!(push(&mut d), (Some(0.9), true));
+    }
+
+    #[test]
+    fn a_score_just_under_the_threshold_does_not() {
+        let mut d = detector(ScriptedWake::heard_after(1, 0.49), 0.5, 20);
+        push(&mut d);
+        assert_eq!(push(&mut d), (Some(0.49), false));
+    }
+
+    #[test]
+    fn a_score_exactly_at_the_threshold_counts() {
+        let mut d = detector(ScriptedWake::heard_after(1, 0.5), 0.5, 20);
+        push(&mut d);
+        assert_eq!(push(&mut d), (Some(0.5), true));
+    }
+
+    #[test]
+    fn scores_that_fall_short_are_still_reported() {
+        // Choosing how sure the detector must be is guesswork without
+        // seeing the ones that did not make it.
+        let mut d = detector(ScriptedWake::heard_after(3, 0.9), 0.5, 20);
+        for _ in 0..3 {
+            assert_eq!(push(&mut d), (Some(0.05), false));
+        }
+    }
+
+    /// The count has to move while the pipeline is empty.
+    ///
+    /// Hearing the word clears the pipeline, and a cleared pipeline
+    /// scores nothing until it refills. A count that only moved on
+    /// scores would wait out that refill and only then begin, leaving
+    /// the detector deaf for about twice the spell it was given.
+    #[test]
+    fn looking_away_is_counted_in_audio_not_in_scores() {
+        let mut d = detector(ScriptedWake::silent_then(10, 0.9), 0.5, 4);
+
+        // Nothing scored yet, so nothing counts.
+        for _ in 0..10 {
+            assert_eq!(push(&mut d), (None, false));
+        }
+        assert_eq!(d.settling(), 0);
+
+        let (_, counted) = push(&mut d);
+        assert!(counted, "the loud frame should have counted");
+        assert_eq!(d.settling(), 4);
+
+        // Cleared, so it says nothing for ten frames. The count must
+        // run through them rather than waiting for them to end.
+        for expected in [3, 2, 1, 0] {
+            assert_eq!(push(&mut d), (None, false));
+            assert_eq!(d.settling(), expected, "the count stalled on the refill");
+        }
+    }
+
+    #[test]
+    fn the_same_words_are_not_heard_twice_on_the_way_out() {
+        // Loud every frame, as one long utterance draining out would be.
+        let mut d = detector(ScriptedWake::new(vec![Some(0.9)]), 0.5, 5);
+        assert!(push(&mut d).1, "the first one counts");
+        for _ in 0..5 {
+            assert!(!push(&mut d).1, "it was heard again while looking away");
+        }
+        assert!(push(&mut d).1, "a fresh one counts once the spell is over");
+    }
+
+    #[test]
+    fn hearing_it_clears_the_pipeline() {
+        let mut d = detector(ScriptedWake::heard_after(1, 0.9), 0.5, 2);
+        push(&mut d);
+        push(&mut d);
+        assert_eq!(d.model.resets, 1, "the pipeline was not cleared");
+    }
+
+    #[test]
+    fn a_fresh_detector_is_not_looking_away() {
+        let d = detector(ScriptedWake::new(vec![Some(0.1)]), 0.5, 20);
+        assert_eq!(d.settling(), 0);
+    }
+
+    #[test]
+    fn asking_it_to_start_again_makes_it_look_away() {
+        let mut d = detector(ScriptedWake::new(vec![Some(0.9)]), 0.5, 3);
+        d.reset();
+        assert_eq!(d.settling(), 3);
+        assert_eq!(d.model.resets, 1);
+        assert!(!push(&mut d).1, "loud, but it is looking away");
+    }
+
+    #[test]
+    fn a_threshold_changed_later_is_the_one_used() {
+        let mut d = detector(ScriptedWake::new(vec![Some(0.6)]), 0.9, 20);
+        assert!(!push(&mut d).1, "0.6 is under 0.9");
+        d.set_threshold(0.5);
+        assert!(push(&mut d).1, "0.6 is over 0.5");
+    }
+
+    /// What happens the moment it counts must happen before the
+    /// application is told, so a slow handler cannot delay the alert or
+    /// the recording.
+    #[test]
+    fn acting_on_it_comes_before_telling_anyone() {
+        let ring = Arc::new(Ring::new(64));
+        let dispatcher = Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY));
+        let acted = Arc::new(AtomicBool::new(false));
+        let told_too_early = Arc::new(AtomicBool::new(false));
+
+        let flag = Arc::clone(&acted);
+        let bad = Arc::clone(&told_too_early);
+        dispatcher.set_handler(Box::new(move |event| {
+            if matches!(event, Event::WakeDetected { .. }) && !flag.load(Ordering::SeqCst) {
+                bad.store(true, Ordering::SeqCst);
+            }
+        }));
+
+        let on_wake = {
+            let flag = Arc::clone(&acted);
+            Box::new(move || flag.store(true, Ordering::SeqCst)) as OnWake
+        };
+        let thread = WakeThread::start(
+            detector(ScriptedWake::heard_after(1, 0.9), 0.5, 20),
+            Arc::clone(&ring),
+            Arc::clone(&dispatcher),
+            on_wake,
+        )
+        .unwrap();
+
+        for _ in 0..4 {
+            ring.push(chunk());
+        }
+        assert!(
+            wait_until(|| acted.load(Ordering::SeqCst)),
+            "nothing was done on hearing it"
+        );
+        assert!(
+            !told_too_early.load(Ordering::SeqCst),
+            "the application was told before the alert and recording were seen to"
+        );
+        thread.shutdown();
+    }
+
+    #[test]
+    fn the_most_recent_score_is_there_to_read() {
+        let ring = Arc::new(Ring::new(64));
+        let dispatcher = Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY));
+        let thread = WakeThread::start(
+            detector(ScriptedWake::new(vec![Some(0.31)]), 0.9, 20),
+            Arc::clone(&ring),
+            dispatcher,
+            Box::new(|| {}),
+        )
+        .unwrap();
+
+        assert_eq!(thread.last_score(), None, "nothing scored yet");
+        ring.push(chunk());
+
+        assert!(wait_until(|| thread.last_score().is_some()));
+        // Under the threshold, so it never counted, but it is readable.
+        assert_eq!(thread.last_score(), Some(0.31));
+        thread.shutdown();
+    }
+}

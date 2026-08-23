@@ -273,6 +273,69 @@ impl WakeSource for WakeModel {
     }
 }
 
+/// Answers from a script instead of listening.
+///
+/// Tests use it to lay out exactly what the detector is told and when,
+/// so what is being checked is the deciding, not the model.
+#[cfg(test)]
+pub struct ScriptedWake {
+    /// One answer per call, in order. `None` stands for "not enough
+    /// heard yet", which is what a cleared pipeline gives while it
+    /// refills. Once used up, the last answer repeats.
+    script: Vec<Option<f32>>,
+    position: usize,
+    pub resets: usize,
+}
+
+#[cfg(test)]
+impl ScriptedWake {
+    pub fn new(script: Vec<Option<f32>>) -> Self {
+        Self {
+            script,
+            position: 0,
+            resets: 0,
+        }
+    }
+
+    /// Quiet for a while, then one loud frame, then quiet again.
+    pub fn heard_after(quiet_frames: usize, score: f32) -> Self {
+        let mut script = vec![Some(0.05); quiet_frames];
+        script.push(Some(score));
+        script.push(Some(0.05));
+        Self::new(script)
+    }
+
+    /// Says nothing at all for a while, as a cleared pipeline does
+    /// while it refills, then answers.
+    pub fn silent_then(empty_frames: usize, score: f32) -> Self {
+        let mut script = vec![None; empty_frames];
+        script.push(Some(score));
+        script.push(Some(0.05));
+        Self::new(script)
+    }
+}
+
+#[cfg(test)]
+impl WakeSource for ScriptedWake {
+    fn push(&mut self, _frame: &[i16]) -> Result<Option<f32>> {
+        let answer = self
+            .script
+            .get(self.position)
+            .copied()
+            .or_else(|| self.script.last().copied())
+            .unwrap_or(None);
+        self.position += 1;
+        Ok(answer)
+    }
+
+    fn reset(&mut self) {
+        self.resets += 1;
+        // A cleared pipeline gives nothing until it refills. Anything
+        // that assumes otherwise would not be modelling the real one.
+        self.position = 0;
+    }
+}
+
 fn shape_of(outlet: &ort::value::Outlet) -> Vec<i64> {
     match outlet.dtype() {
         ort::value::ValueType::Tensor { shape, .. } => shape.iter().copied().collect(),
