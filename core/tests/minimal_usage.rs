@@ -1,9 +1,8 @@
 //! The shortest way to get live audio, kept honest by compiling it.
 //!
-//! The quickstart shows this. If a later change makes an application
-//! set something else first, or call one more thing before audio
-//! arrives, this stops matching and someone has to decide whether the
-//! extra step is worth it.
+//! If a later change makes an application set something else first, or
+//! call one more thing before audio arrives, this stops matching and
+//! someone has to decide whether the extra step is worth it.
 
 use std::time::Duration;
 

@@ -1,16 +1,16 @@
 # Contributing
 
-## Spec words stay in the spec
+## Say the thing, not its number
 
-The planning documents number things: requirements, user stories, tasks.
-Those numbers mean nothing outside those documents, and they go stale
-the moment a document is rewritten.
+Planning documents number what they list. Those numbers mean nothing
+outside them and go stale the moment one is rewritten.
 
-So they never appear in code, comments, commit messages, or this
-README. Write the complete sentence instead.
+So no number, label, or shorthand from a planning document belongs in
+code, comments, commit messages, or anything here. Write the complete
+sentence instead.
 
 ```
-Bad:   // Settling, per FR-018
+Bad:   // Settling, rule 18
 Good:  // Long enough that what was just heard is not heard again.
 ```
 
