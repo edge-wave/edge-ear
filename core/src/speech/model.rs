@@ -129,11 +129,22 @@ pub struct SileroModel {
     session: ort::session::Session,
     /// Shape [2, 1, 128], carried from one call to the next.
     state: Vec<f32>,
+    /// The tail of the last window, put in front of the next one.
+    ///
+    /// The model is handed context plus frame, not the frame alone. Its
+    /// input length is not fixed in the file, so leaving the context off
+    /// is accepted without complaint and quietly answers nothing.
+    context: Vec<f32>,
     sample_rate: u32,
 }
 
 /// Values the recurrent state holds: two layers, one stream, 128 wide.
 const STATE_VALUES: usize = 2 * 128;
+
+/// Samples of the previous window handed back to the model.
+fn context_samples(sample_rate: u32) -> usize {
+    if sample_rate == 8_000 { 32 } else { 64 }
+}
 
 impl SileroModel {
     /// Load the model that ships with this library.
@@ -148,6 +159,7 @@ impl SileroModel {
         Ok(Self {
             session,
             state: vec![0.0; STATE_VALUES],
+            context: vec![0.0; context_samples(format.sample_rate)],
             sample_rate: format.sample_rate,
         })
     }
@@ -155,7 +167,15 @@ impl SileroModel {
 
 impl SpeechModel for SileroModel {
     fn probability(&mut self, frame: &[i16]) -> Result<f32> {
-        let audio: Vec<f32> = frame.iter().map(|s| *s as f32 / 32768.0).collect();
+        // Context first, then the new frame. The model reads both and
+        // answers about the frame.
+        let mut audio: Vec<f32> = Vec::with_capacity(self.context.len() + frame.len());
+        audio.extend_from_slice(&self.context);
+        audio.extend(frame.iter().map(|s| *s as f32 / 32768.0));
+
+        let keep = context_samples(self.sample_rate);
+        self.context = audio[audio.len().saturating_sub(keep)..].to_vec();
+
         let samples = audio.len() as i64;
 
         let build = |what: &'static str, shape: Vec<i64>, data: Vec<f32>| {
@@ -201,6 +221,7 @@ impl SpeechModel for SileroModel {
         // tidiness one: what the last recording heard would carry into
         // this one and change the answer.
         self.state = vec![0.0; STATE_VALUES];
+        self.context = vec![0.0; context_samples(self.sample_rate)];
     }
 }
 
@@ -270,6 +291,54 @@ mod silero_tests {
         );
     }
 
+    /// The model is handed the tail of the previous window along with
+    /// the new one. Leaving that off is accepted without complaint and
+    /// makes the model answer nothing to everything, which is how this
+    /// went unnoticed once already.
+    #[test]
+    #[ignore]
+    fn the_tail_of_each_window_is_carried_into_the_next() {
+        let mut model = SileroModel::bundled(AudioFormat::mono_16k()).unwrap();
+        assert_eq!(model.context.len(), 64, "one window of context at 16 kHz");
+        assert!(
+            model.context.iter().all(|s| *s == 0.0),
+            "a fresh model starts with nothing behind it"
+        );
+
+        let loud: Vec<i16> = (0..512).map(|n| ((n * 37) % 8000) as i16 - 4000).collect();
+        model.probability(&loud).unwrap();
+
+        assert_eq!(model.context.len(), 64, "the context stays one window wide");
+        assert!(
+            model.context.iter().any(|s| *s != 0.0),
+            "the tail of the window was not kept"
+        );
+
+        // The tail kept must be the end of what was just heard.
+        let expected: Vec<f32> = loud[512 - 64..]
+            .iter()
+            .map(|s| *s as f32 / 32768.0)
+            .collect();
+        assert_eq!(model.context, expected);
+
+        // And a reset clears it, so a new recording starts from nothing.
+        model.reset();
+        assert!(model.context.iter().all(|s| *s == 0.0));
+    }
+
+    /// What the model is given must be context plus frame, not the
+    /// frame alone. The file does not fix its own input length, so a
+    /// frame on its own is accepted and answers nothing.
+    #[test]
+    #[ignore]
+    fn the_model_is_given_more_than_the_frame() {
+        let mut model = SileroModel::bundled(AudioFormat::mono_16k()).unwrap();
+        let frame = vec![1000i16; 512];
+        model.probability(&frame).unwrap();
+        // 64 of context sat in front of the 512 that went in.
+        assert_eq!(model.context.len() + 512, 576);
+    }
+
     #[test]
     #[ignore]
     fn a_reset_puts_the_model_back_where_it_started() {
@@ -287,6 +356,151 @@ mod silero_tests {
         assert_eq!(
             first, after_reset,
             "the same audio from a fresh state must give the same answer"
+        );
+    }
+}
+
+/// Diagnostics for when the library says one thing and your ears say
+/// another. Point them at a recording and see what the model decides.
+///
+///     EDGE_EAR_WAV=/path/to/speech.wav \
+///       cargo test -p edge-ear-core --lib what_the_model_hears -- --ignored --nocapture
+#[cfg(test)]
+mod diagnostics {
+    use super::*;
+    use crate::capture::Samples;
+    use crate::capture::convert::Converter;
+    use crate::config::SampleType;
+
+    #[test]
+    #[ignore]
+    fn what_the_model_hears() {
+        let Ok(path) = std::env::var("EDGE_EAR_WAV") else {
+            println!("set EDGE_EAR_WAV to a wav file to run this");
+            return;
+        };
+
+        let (raw, spec) =
+            crate::player::registry::decode_file(&path.clone().into()).expect("read the wav");
+        let peak = raw.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
+        println!("{path}");
+        println!(
+            "  {} Hz, {} ch, {} samples, peak {peak}",
+            spec.sample_rate,
+            spec.channels,
+            raw.len()
+        );
+
+        let to = AudioFormat::mono_16k();
+        let audio = if spec.sample_rate == 16_000 && spec.channels == 1 {
+            raw
+        } else {
+            let from = AudioFormat::new(spec.sample_rate, spec.channels, SampleType::I16);
+            let mut converter = Converter::new(from, to).expect("a converter");
+            let mut out = match converter.convert(&Samples::I16(raw)).expect("convert") {
+                Samples::I16(v) => v,
+                Samples::F32(v) => v.iter().map(|s| (s * 32767.0) as i16).collect(),
+            };
+            if let Ok(Samples::I16(mut tail)) = converter.flush() {
+                out.append(&mut tail);
+            }
+            out
+        };
+        println!("  {} samples at 16 kHz mono", audio.len());
+
+        let mut model = SileroModel::bundled(to).expect("the bundled model");
+        let (mut best, mut over, mut frames) = (0.0f32, 0usize, 0usize);
+        let mut marks = String::new();
+
+        for frame in audio.chunks(512) {
+            if frame.len() < 512 {
+                break;
+            }
+            let p = model.probability(frame).expect("an answer");
+            best = best.max(p);
+            frames += 1;
+            if p >= 0.5 {
+                over += 1;
+            }
+            if marks.len() < 100 {
+                marks.push(match p {
+                    p if p >= 0.9 => '#',
+                    p if p >= 0.5 => '+',
+                    p if p >= 0.2 => '-',
+                    _ => '.',
+                });
+            }
+        }
+
+        println!("  {frames} frames, highest {best:.3}, {over} over the 0.5 threshold");
+        println!("  [{marks}]");
+        println!("  # over 0.9   + over 0.5   - over 0.2   . quiet");
+    }
+}
+
+/// The same question asked of the whole library rather than the model
+/// alone: does real speech end a recording by going quiet?
+#[cfg(test)]
+mod pipeline_diagnostics {
+    use crate::backend::fake::FakeBackend;
+    use crate::config::{AudioFormat, SampleType};
+    use crate::events::{EndReason, Event};
+    use crate::{EdgeEar, player};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore]
+    fn real_speech_ends_a_recording_by_going_quiet() {
+        let Ok(path) = std::env::var("EDGE_EAR_WAV") else {
+            println!("set EDGE_EAR_WAV to a wav of speech to run this");
+            return;
+        };
+
+        let (audio, spec) =
+            player::registry::decode_file(&path.clone().into()).expect("read the wav");
+        println!(
+            "{path}: {} Hz, {} ch, {} samples",
+            spec.sample_rate,
+            spec.channels,
+            audio.len()
+        );
+
+        let device = AudioFormat::new(spec.sample_rate, spec.channels, SampleType::I16);
+        let block = spec.sample_rate as usize / 50;
+        let ear = EdgeEar::with_backend(Box::new(FakeBackend::playing(audio, device, block)))
+            .expect("handle");
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        ear.on_event(move |event| {
+            if let Event::SpeechEnded { reason, audio, .. } = event {
+                sink.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push((reason, audio.len()));
+            }
+        })
+        .unwrap();
+
+        ear.set_silence_duration(Duration::from_millis(600))
+            .unwrap();
+        ear.set_no_speech_timeout(Duration::from_secs(30)).unwrap();
+        ear.set_max_recording(Duration::from_secs(60)).unwrap();
+        ear.enable_speech().unwrap();
+        ear.start().unwrap();
+        ear.start_recording().unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while seen.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let seen = seen.lock().unwrap();
+        let (reason, samples) = *seen.first().expect("the recording never ended");
+        println!("ended: {reason} with {samples} samples");
+        assert_eq!(
+            reason,
+            EndReason::Silence,
+            "speech should end a recording by stopping, not by timing out"
         );
     }
 }
