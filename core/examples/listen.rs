@@ -43,6 +43,9 @@ Set these to wait for a wake word rather than recording at once:
                            default 0.5
   EDGE_EAR_SILENCE         seconds of quiet that end a recording.
                            default 0.8
+  EDGE_EAR_WAKE_SETTLE     frames of 80 ms to look away for after
+                           hearing it, so the same words are not heard
+                           twice on their way out. default 20
 
 The wake score is shown beside the level meter as it is heard, whether
 or not it reached the threshold. Watch it while saying the wake word to
@@ -217,6 +220,12 @@ fn set_up_wake(ear: &EdgeEar) -> Result<bool, Box<dyn std::error::Error>> {
     )?;
     ear.load_wake_model(&dir.join(&word))?;
 
+    if let Ok(text) = std::env::var("EDGE_EAR_WAKE_SETTLE") {
+        let frames: u32 = text
+            .parse()
+            .map_err(|_| format!("EDGE_EAR_WAKE_SETTLE must be a whole number, got {text:?}"))?;
+        ear.set_wake_settle_frames(frames)?;
+    }
     if let Ok(text) = std::env::var("EDGE_EAR_WAKE_THRESHOLD") {
         let value: f32 = text
             .parse()
@@ -226,7 +235,12 @@ fn set_up_wake(ear: &EdgeEar) -> Result<bool, Box<dyn std::error::Error>> {
     ear.enable_wake(Some("beep"))?;
 
     println!("wake word: {word}");
+    let settle = ear.config().tunable.wake_settle_frames;
     println!("threshold: {:.2}", ear.config().tunable.wake_threshold);
+    println!(
+        "after hearing it, looks away for {settle} frames ({:.1}s)",
+        settle as f64 * 0.08
+    );
     Ok(true)
 }
 

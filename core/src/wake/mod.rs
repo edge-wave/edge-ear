@@ -45,20 +45,25 @@ impl Detector {
     /// The first value is the score, whenever the pipeline has heard
     /// enough to give one. The second says it counted as a detection.
     pub fn push(&mut self, frame: &[i16]) -> Result<(Option<f32>, bool)> {
+        // Counted per frame of audio, not per score. Clearing the
+        // pipeline stops it scoring at all until it refills, and a
+        // count that only moved on scores would then wait for the
+        // refill and only start afterwards, keeping the detector deaf
+        // for about twice as long as intended.
+        if self.settling > 0 {
+            self.settling -= 1;
+        }
+
         let Some(score) = self.model.push(frame)? else {
             return Ok((None, false));
         };
-
-        if self.settling > 0 {
-            self.settling -= 1;
-            return Ok((Some(score), false));
-        }
-        if score < self.threshold {
+        if self.settling > 0 || score < self.threshold {
             return Ok((Some(score), false));
         }
 
-        // Heard it. Look away for a while so the same utterance is not
-        // reported again as it drains out of the pipeline.
+        // Heard it. Clearing the pipeline drops the utterance that
+        // caused this, so it cannot be heard a second time on its way
+        // out. The count above covers the refill.
         self.model.reset();
         self.settling = self.settle_frames;
         Ok((Some(score), true))
@@ -68,6 +73,67 @@ impl Detector {
     pub fn reset(&mut self) {
         self.model.reset();
         self.settling = self.settle_frames;
+    }
+
+    /// Frames still to be ignored. Used by the test that checks the
+    /// count moves while the pipeline is refilling.
+    #[cfg(test)]
+    pub fn settling(&self) -> u32 {
+        self.settling
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wake::model::FRAME_SAMPLES;
+
+    fn detector(settle: u32) -> Option<Detector> {
+        let dir = std::path::PathBuf::from(std::env::var("EDGE_EAR_WAKE_DIR").ok()?);
+        let mut model = WakeModel::new(
+            &dir.join("melspectrogram.onnx"),
+            &dir.join("embedding_model.onnx"),
+        )
+        .ok()?;
+        model.load_word(&dir.join("hey_jarvis_v0.1.onnx")).ok()?;
+        Some(Detector::new(model, 0.5, settle))
+    }
+
+    /// The count has to move while the pipeline is empty.
+    ///
+    /// Clearing the pipeline stops it scoring at all until it refills.
+    /// A count that only moved on scores would wait for that refill and
+    /// only begin afterwards, leaving the detector deaf for about twice
+    /// as long as asked for.
+    #[test]
+    #[ignore]
+    fn looking_away_is_counted_in_audio_not_in_scores() {
+        let Some(mut detector) = detector(20) else {
+            println!("set EDGE_EAR_WAKE_DIR to run this");
+            return;
+        };
+        detector.reset();
+        assert_eq!(detector.settling(), 20);
+
+        let quiet = vec![0i16; FRAME_SAMPLES];
+
+        // The pipeline gives nothing for the first several frames while
+        // it refills. The count must move anyway.
+        let (score, _) = detector.push(&quiet).unwrap();
+        assert!(score.is_none(), "it should not be scoring yet");
+        assert_eq!(detector.settling(), 19, "the count stalled on the refill");
+
+        for _ in 0..19 {
+            detector.push(&quiet).unwrap();
+        }
+        assert_eq!(detector.settling(), 0, "still looking away after 20 frames");
+    }
+
+    #[test]
+    #[ignore]
+    fn a_fresh_detector_is_not_looking_away() {
+        let Some(detector) = detector(20) else { return };
+        assert_eq!(detector.settling(), 0, "nothing has been heard yet");
     }
 }
 
