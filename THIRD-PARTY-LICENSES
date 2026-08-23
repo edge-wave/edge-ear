@@ -43,15 +43,24 @@ what actually identify it.
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
-## Wake word feature models
 
-Not shipped yet. When they are, they come from openWakeWord
-(https://github.com/dscripka/openWakeWord) under the Apache License
-2.0, and its attribution terms will be recorded here alongside a
-checksum and the interface the code expects.
+## Wake word models
 
-The wake word itself is never shipped. An application supplies the
-model for the phrase it wants.
+None are shipped. An application supplies all three: the two that turn
+audio into features, and the one that knows the phrase.
+
+The ready-made set from openWakeWord
+(https://github.com/dscripka/openWakeWord) is offered for
+non-commercial use only, because of what went into training it. This
+library is MIT or Apache-2.0, so shipping those files would take away
+a freedom the licence promises. The first two are arguably not covered
+by that condition, since one is a fixed sound transform and the other
+is Google's, but the wording does not separate them, and a licence
+read loosely is a licence read wrong.
+
+Nothing is lost by leaving them out. The models are loaded from a path
+either way, and an application already has to supply the one for its
+own phrase.
 
 ## Code that travels in the built library
 
