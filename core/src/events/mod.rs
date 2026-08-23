@@ -1,4 +1,4 @@
-pub mod dispatch;
+pub(crate) mod dispatch;
 
 use std::time::Duration;
 

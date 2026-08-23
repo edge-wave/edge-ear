@@ -73,6 +73,10 @@ impl<T> Ring<T> {
     /// Returns `Timeout` if there was still no room in time, so the
     /// caller can check whether it has been told to stop and try again.
     /// Waiting for ever here would leave a stopping player wedged.
+    ///
+    /// Only a device backend calls this, so a build with no backend
+    /// compiled in leaves it unused.
+    #[allow(dead_code, reason = "used by device backends")]
     pub fn push_before(&self, item: T, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
         let mut inner = self.lock();
@@ -145,6 +149,10 @@ impl<T> Ring<T> {
     }
 
     /// Take an item only if one is already there.
+    ///
+    /// A device callback must never wait, so this is how one drains the
+    /// queue. Unused in a build with no backend compiled in.
+    #[allow(dead_code, reason = "used by device backends")]
     pub fn try_take(&self) -> Option<Taken<T>> {
         let mut inner = self.lock();
         let item = inner.items.pop_front()?;
@@ -165,25 +173,12 @@ impl<T> Ring<T> {
         self.space.notify_all();
     }
 
-    pub fn reopen(&self) {
-        let mut inner = self.lock();
-        inner.closed = false;
-        inner.items.clear();
-        inner.dropped_pending = 0;
-    }
-
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.lock().items.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.lock().capacity
-    }
-
+    #[cfg(test)]
     pub fn dropped_total(&self) -> u64 {
         self.lock().dropped_total
     }
@@ -198,7 +193,11 @@ impl<T> Ring<T> {
 
 impl<T> Ring<T> {
     /// Snapshot of everything held, oldest first, without removing it.
-    /// This is how pre-roll reaches back into recent history.
+    ///
+    /// This is how pre-roll reaches back into recent history. Nothing
+    /// calls it yet; the recording path that will is the next piece of
+    /// work.
+    #[allow(dead_code, reason = "pre-roll will read history through this")]
     pub fn snapshot(&self) -> Vec<T>
     where
         T: Clone,

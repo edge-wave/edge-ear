@@ -44,11 +44,15 @@ pub struct RegisteredSound {
     pub id: SoundId,
     /// Interleaved, already at the output format, already shaped.
     pub samples: Vec<i16>,
+    /// What the samples were converted to when the sound was
+    /// registered. Kept so the conversion can be checked.
+    #[allow(dead_code, reason = "records what conversion produced")]
     pub format: AudioFormat,
     pub volume: f32,
 }
 
 impl RegisteredSound {
+    #[cfg(test)]
     pub fn duration(&self) -> std::time::Duration {
         let frames = self.samples.len() / self.format.channels.max(1) as usize;
         std::time::Duration::from_secs_f64(frames as f64 / self.format.sample_rate as f64)
@@ -121,18 +125,17 @@ impl Registry {
             .ok_or_else(|| Error::UnknownSound(id.to_string()))
     }
 
-    pub fn contains(&self, id: &str) -> bool {
-        self.sounds.contains_key(id)
-    }
-
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.sounds.len()
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.sounds.is_empty()
     }
 
+    #[cfg(test)]
     /// Samples held across every registered sound. Used by the test
     /// that checks memory stays flat over repeated register cycles.
     pub fn total_samples(&self) -> usize {

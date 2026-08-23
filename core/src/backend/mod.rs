@@ -1,5 +1,10 @@
 #[cfg(feature = "cpal-backend")]
 pub mod cpal_backend;
+/// A stand-in for real devices, for tests.
+///
+/// Public on purpose: anyone writing tests against this library needs a
+/// microphone that produces known audio on demand. It touches no
+/// hardware and reaches nothing outside the process.
 pub mod fake;
 
 use crate::capture::Samples;

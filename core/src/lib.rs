@@ -5,24 +5,33 @@
 //! reaches the network.
 
 pub mod backend;
-pub mod capture;
 pub mod config;
 pub mod error;
 pub mod events;
-pub mod player;
+
+// Machinery, not surface. An application never builds a capture thread
+// or a player itself; it drives them through the handle below. Keeping
+// these crate-only is what makes "one owner per device" a rule the
+// compiler holds, rather than one the documentation asks for.
+pub(crate) mod capture;
+pub(crate) mod player;
+
+// The few types from those modules that an application does touch.
+pub use capture::{AudioChunk, Samples};
+pub use player::registry::{SoundId, SoundSource};
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use std::time::Duration;
 
 use backend::{AudioBackend, DeviceInfo, FormatRequest};
-use capture::{AudioChunk, CaptureThread, Consumer, ConsumerKind};
+use capture::{CaptureThread, Consumer, ConsumerKind};
 use config::{AudioFormat, Config, Target};
 use error::{Error, Result};
 use events::Event;
 use events::dispatch::{DEFAULT_QUEUE_CAPACITY, Dispatcher};
 use player::Player;
-use player::registry::{Registry, SoundSource};
+use player::registry::Registry;
 
 /// Where a handle is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

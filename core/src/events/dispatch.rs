@@ -89,23 +89,12 @@ impl Dispatcher {
         self.shared.ready.notify_one();
     }
 
-    /// Wait for the queue to empty. Used by tests and by shutdown.
-    pub fn drain(&self) {
-        loop {
-            {
-                let queue = lock(&self.shared.queue);
-                if queue.items.is_empty() {
-                    return;
-                }
-            }
-            thread::yield_now();
-        }
-    }
-
+    #[cfg(test)]
     pub fn queued(&self) -> usize {
         lock(&self.shared.queue).items.len()
     }
 
+    #[cfg(test)]
     pub fn dropped(&self) -> u64 {
         lock(&self.shared.queue).dropped
     }

@@ -11,7 +11,7 @@ use crate::config::AudioFormat;
 use crate::error::{Error, Result};
 use crate::events::Event;
 use crate::events::dispatch::Dispatcher;
-use crate::player::registry::{RegisteredSound, SoundId};
+use crate::player::registry::RegisteredSound;
 
 /// Samples handed to the device at a time.
 const WRITE_CHUNK: usize = 512;
@@ -102,10 +102,6 @@ impl Player {
 
     pub fn is_playing(&self) -> bool {
         self.lock().current.is_some()
-    }
-
-    pub fn playing_id(&self) -> Option<SoundId> {
-        self.lock().current.as_ref().map(|p| p.sound.id.clone())
     }
 
     pub fn shutdown(&mut self) {
