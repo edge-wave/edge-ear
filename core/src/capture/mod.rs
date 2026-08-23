@@ -143,6 +143,12 @@ impl Consumer {
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
+
+    /// Flipping this takes effect on the next block of audio and
+    /// disturbs no other consumer.
+    pub fn set_enabled(&self, on: bool) {
+        self.enabled.store(on, Ordering::Relaxed);
+    }
 }
 
 /// How many chunks a consumer's queue must hold to cover the wanted
