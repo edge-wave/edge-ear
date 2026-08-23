@@ -26,7 +26,7 @@ fn model_dir() -> Option<PathBuf> {
 #[test]
 fn listening_without_a_model_says_one_is_needed() {
     let ear = ear();
-    let err = ear.enable_wake().expect_err("must refuse");
+    let err = ear.enable_wake(None).expect_err("must refuse");
     assert!(matches!(err, Error::NoWakeModel), "{err}");
     assert!(!ear.is_wake_enabled());
 }
@@ -69,7 +69,7 @@ fn models_cannot_be_swapped_while_capture_runs() {
 #[test]
 fn everything_else_keeps_working_without_a_wake_word() {
     let ear = ear();
-    assert!(ear.enable_wake().is_err());
+    assert!(ear.enable_wake(None).is_err());
 
     // Reading raw audio and detecting speech are untouched by there
     // being no wake word.
@@ -110,14 +110,14 @@ fn a_wake_word_can_be_switched_on_and_off_around_a_run() {
         .unwrap();
 
     // Accepted before capture starts, and in force once it does.
-    ear.enable_wake().unwrap();
+    ear.enable_wake(None).unwrap();
     assert!(ear.is_wake_enabled());
     ear.start().unwrap();
     assert!(ear.is_wake_enabled());
 
     ear.disable_wake().unwrap();
     assert!(!ear.is_wake_enabled());
-    ear.enable_wake().unwrap();
+    ear.enable_wake(None).unwrap();
 
     // Reading raw audio is untouched throughout.
     ear.read(Some(Duration::from_secs(2))).expect("audio");
@@ -149,7 +149,7 @@ fn silence_is_never_reported_as_the_wake_word() {
     })
     .unwrap();
 
-    ear.enable_wake().unwrap();
+    ear.enable_wake(None).unwrap();
     ear.start().unwrap();
     std::thread::sleep(Duration::from_secs(3));
     ear.stop().unwrap();

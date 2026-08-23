@@ -75,11 +75,16 @@ struct Control {
     reset: bool,
 }
 
+/// Done the moment the wake word is heard, before the application is
+/// told. This is where the alert plays and the recording opens, so a
+/// slow application handler cannot delay either.
+pub type OnWake = Box<dyn Fn() + Send>;
+
 /// Runs wake word detection away from the capture thread.
 pub struct WakeThread {
     control: Arc<Mutex<Control>>,
     stop: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
+    worker: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl WakeThread {
@@ -87,6 +92,7 @@ impl WakeThread {
         detector: Detector,
         ring: Arc<Ring<AudioChunk>>,
         dispatcher: Arc<Dispatcher>,
+        on_wake: OnWake,
     ) -> Result<Self> {
         let control = Arc::new(Mutex::new(Control::default()));
         let stop = Arc::new(AtomicBool::new(false));
@@ -96,7 +102,7 @@ impl WakeThread {
             let stop = Arc::clone(&stop);
             thread::Builder::new()
                 .name("edge-ear-wake".to_string())
-                .spawn(move || run(detector, ring, control, stop, dispatcher))
+                .spawn(move || run(detector, ring, control, stop, dispatcher, on_wake))
                 .map_err(|e| Error::Backend {
                     device: Device::Input,
                     reason: format!("wake thread would not start: {e}"),
@@ -106,7 +112,7 @@ impl WakeThread {
         Ok(Self {
             control,
             stop,
-            worker: Some(worker),
+            worker: Mutex::new(Some(worker)),
         })
     }
 
@@ -119,9 +125,10 @@ impl WakeThread {
         self.lock().reset = true;
     }
 
-    pub fn shutdown(&mut self) {
+    pub fn shutdown(&self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(worker) = self.worker.take() {
+        let worker = self.worker.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(worker) = worker {
             let _ = worker.join();
         }
     }
@@ -143,6 +150,7 @@ fn run(
     control: Arc<Mutex<Control>>,
     stop: Arc<AtomicBool>,
     dispatcher: Arc<Dispatcher>,
+    on_wake: OnWake,
 ) {
     while !stop.load(Ordering::Relaxed) {
         // Short waits, so being told to stop is noticed even when no
@@ -169,7 +177,12 @@ fn run(
         };
 
         match detector.push(samples) {
-            Ok(Some(score)) => dispatcher.emit(Event::WakeDetected { score }),
+            Ok(Some(score)) => {
+                // Act first, tell the application second. The alert and
+                // the recording must not wait on a slow handler.
+                on_wake();
+                dispatcher.emit(Event::WakeDetected { score });
+            }
             Ok(None) => {}
             Err(e) => dispatcher.emit(Event::DeviceError {
                 device: Device::Input,
