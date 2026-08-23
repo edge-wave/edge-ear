@@ -148,7 +148,7 @@ impl Registry {
 }
 
 /// Read a sound file into interleaved 16-bit samples.
-fn decode_file(path: &PathBuf) -> Result<(Vec<i16>, AudioFormat)> {
+pub(crate) fn decode_file(path: &PathBuf) -> Result<(Vec<i16>, AudioFormat)> {
     if !path.exists() {
         return Err(Error::ModelNotFound { path: path.clone() });
     }
