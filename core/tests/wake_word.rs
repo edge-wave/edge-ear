@@ -178,3 +178,43 @@ fn a_model_that_is_not_a_wake_word_is_refused() {
     assert!(matches!(err, Error::ModelInvalid { .. }), "{err}");
     println!("{err}");
 }
+
+#[test]
+fn there_is_no_score_before_anything_has_been_heard() {
+    let ear = ear();
+    assert_eq!(ear.wake_score(), None, "nothing has been scored yet");
+}
+
+#[test]
+#[ignore]
+fn scores_are_reported_even_when_they_fall_short() {
+    let Some(dir) = model_dir() else {
+        println!("set EDGE_EAR_WAKE_DIR to run this");
+        return;
+    };
+    let ear = ear();
+    ear.load_wake_features(
+        &dir.join("melspectrogram.onnx"),
+        &dir.join("embedding_model.onnx"),
+    )
+    .unwrap();
+    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+        .unwrap();
+    ear.enable_wake(None).unwrap();
+    ear.start().unwrap();
+
+    // Silence never reaches the threshold, so without reporting the
+    // ones that fall short there would be nothing to see at all.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut score = None;
+    while score.is_none() && std::time::Instant::now() < deadline {
+        score = ear.wake_score();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let score = score.expect("no score arrived");
+    println!("silence scored {score:.4}");
+    assert!((0.0..=1.0).contains(&score), "a score outside 0 to 1");
+    assert!(score < 0.5, "silence read as the wake word");
+    ear.stop().unwrap();
+}

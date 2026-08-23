@@ -365,6 +365,16 @@ impl EdgeEar {
         self.lock().alert.clone()
     }
 
+    /// How sure the detector was, most recently.
+    ///
+    /// This is every score, not only the ones that counted. Choosing
+    /// how sure it must be is guesswork without seeing the ones that
+    /// fell short. Nothing until capture is running with a wake word
+    /// loaded and enough has been heard to score.
+    pub fn wake_score(&self) -> Option<f32> {
+        self.lock().wake.as_ref().and_then(|w| w.last_score())
+    }
+
     pub fn disable_wake(&self) -> Result<()> {
         self.set_consumer(ConsumerKind::Wake, false)
     }

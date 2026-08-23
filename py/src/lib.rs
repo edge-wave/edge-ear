@@ -447,6 +447,15 @@ impl EdgeEar {
         self.core.wake_alert()
     }
 
+    /// How sure the detector was, most recently.
+    ///
+    /// Every score, not only the ones that counted. Choosing how sure
+    /// it must be is guesswork without seeing the ones that fell short.
+    #[getter]
+    fn wake_score(&self) -> Option<f32> {
+        self.core.wake_score()
+    }
+
     /// Forget what has been heard, so a fresh utterance is needed.
     fn reset_wake(&self) -> PyResult<()> {
         self.core.reset_wake().map_err(to_py)
