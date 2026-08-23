@@ -19,6 +19,11 @@ pub enum Error {
     #[error("{what} can only be set before capture starts; stop capture first")]
     RunningNotAllowed { what: &'static str },
 
+    #[error(
+        "{what} cannot be changed while a recording is open; it would not affect the recording already running"
+    )]
+    RecordingOpen { what: &'static str },
+
     #[error("this handle has been destroyed")]
     Destroyed,
 
@@ -83,6 +88,7 @@ impl Error {
             Error::NotRunning
                 | Error::AlreadyRunning
                 | Error::RunningNotAllowed { .. }
+                | Error::RecordingOpen { .. }
                 | Error::Destroyed
                 | Error::NoWakeModel
         )

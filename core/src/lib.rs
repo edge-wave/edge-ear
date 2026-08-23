@@ -488,24 +488,56 @@ impl EdgeEar {
         self.tune(|c| c.tunable.wake_threshold = value)
     }
 
+    /// How readily audio counts as speech.
+    ///
+    /// These next five shape a recording, and a recording follows the
+    /// rules it opened with. Changing one while a recording is open is
+    /// refused rather than quietly ignored, so a call that returns
+    /// success has always done something.
     pub fn set_speech_threshold(&self, value: f32) -> Result<()> {
-        self.tune(|c| c.tunable.speech_threshold = value)
+        self.tune_recording("the speech threshold", |c| {
+            c.tunable.speech_threshold = value
+        })
     }
 
+    /// How long the speaker must be quiet before a recording ends.
     pub fn set_silence_duration(&self, value: std::time::Duration) -> Result<()> {
-        self.tune(|c| c.tunable.silence_duration = value)
+        self.tune_recording("the silence duration", |c| {
+            c.tunable.silence_duration = value
+        })
     }
 
     pub fn set_max_recording(&self, value: std::time::Duration) -> Result<()> {
-        self.tune(|c| c.tunable.max_recording = value)
+        self.tune_recording("the maximum recording length", |c| {
+            c.tunable.max_recording = value
+        })
     }
 
     pub fn set_no_speech_timeout(&self, value: std::time::Duration) -> Result<()> {
-        self.tune(|c| c.tunable.no_speech_timeout = value)
+        self.tune_recording("the no-speech timeout", |c| {
+            c.tunable.no_speech_timeout = value
+        })
     }
 
     pub fn set_pre_roll(&self, value: std::time::Duration) -> Result<()> {
-        self.tune(|c| c.tunable.pre_roll = value)
+        self.tune_recording("the pre-roll", |c| c.tunable.pre_roll = value)
+    }
+
+    /// True while a recording is collecting audio.
+    pub fn is_recording(&self) -> bool {
+        self.lock()
+            .speech
+            .as_ref()
+            .is_some_and(|s| s.is_recording())
+    }
+
+    /// Change a setting a recording follows. Refused while one is open,
+    /// because it could not affect the recording already running.
+    fn tune_recording(&self, what: &'static str, apply: impl FnOnce(&mut Config)) -> Result<()> {
+        if self.is_recording() {
+            return Err(Error::RecordingOpen { what });
+        }
+        self.tune(apply)
     }
 
     pub fn config(&self) -> Config {
