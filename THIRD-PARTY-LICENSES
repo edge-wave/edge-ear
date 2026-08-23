@@ -10,7 +10,17 @@ LICENSE-APACHE.
 of audio is speech.
 
 - Source: https://github.com/snakers4/silero-vad
+  (file `src/silero_vad/data/silero_vad.onnx` on `master`)
+- Version: 6.2.1 (the version the source project was at)
+- Retrieved: 2026-08-23
+- sha256: 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
 - Licence: MIT
+
+The file keeps the name it has upstream. A version in the name would
+not say what matters: another project ships a model of the same version
+under a similar name, with a different shape entirely. The checksum
+above, and the test that asserts the model's inputs and outputs, are
+what actually identify it.
 
     MIT License
     
