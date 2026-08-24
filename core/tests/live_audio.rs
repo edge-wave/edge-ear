@@ -1,8 +1,6 @@
-//! Reading live audio on demand.
-//!
-//! An application starts capture, reads audio, and stops. There is no
-//! model, no detector, and no callback anywhere in this file. This is
-//! everything a push-to-talk application needs.
+//! Reading live audio on demand: start, read, stop. No model, no
+//! detector, and no callback anywhere in this file, which is everything
+//! a push-to-talk application needs.
 
 use std::sync::Arc;
 use std::thread;

@@ -1,8 +1,6 @@
-//! Softening the edges of a sound.
-//!
-//! Starting or stopping audio at full level snaps the speaker cone and
-//! is heard as a pop. A short ramp at each end and a little silence
-//! either side removes it.
+//! Softening the edges of a sound. Starting or stopping at full level
+//! snaps the speaker cone and is heard as a pop; a short ramp each end
+//! and a little silence either side removes it.
 
 /// Ramp length at each end. Long enough to hide the step, short enough
 /// that a brief alert does not sound faded.

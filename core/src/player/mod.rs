@@ -31,11 +31,9 @@ struct State {
     stopped_by_application: bool,
 }
 
-/// The one owner of the speaker.
-///
-/// Alert sounds, waiting loops, and spoken replies all go through here.
-/// Splitting playback across two owners would put two claims on one
-/// device, which is the problem already solved on the capture side.
+/// The one owner of the speaker. Alerts, waiting loops, and spoken
+/// replies all go through here, because two owners would put two claims
+/// on one device.
 pub struct Player {
     state: Arc<Mutex<State>>,
     wake: Arc<Condvar>,

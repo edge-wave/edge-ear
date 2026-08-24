@@ -1,7 +1,6 @@
-//! The read surface, checked against its contract.
-//!
-//! Nothing here switches on a detector. An application that only reads
-//! raw audio must never need to know they exist.
+//! The read surface, checked against its contract. Nothing here
+//! switches on a detector: an application reading raw audio must never
+//! need to know they exist.
 
 use std::time::Duration;
 

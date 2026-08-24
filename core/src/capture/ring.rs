@@ -4,11 +4,9 @@ use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
 
-/// One consumer's private queue of audio.
-///
-/// The writer never waits. When the queue is full the oldest item goes
-/// and a counter rises, so a slow consumer loses only its own audio and
-/// cannot slow down capture or any other consumer.
+/// One consumer's private queue of audio. The writer never waits: when
+/// full, the oldest goes and a counter rises, so a slow consumer loses
+/// only its own audio and holds up nobody else.
 pub struct Ring<T> {
     inner: Mutex<Inner<T>>,
     ready: Condvar,
@@ -66,16 +64,8 @@ impl<T> Ring<T> {
     }
 
     /// Add an item, waiting for room instead of dropping the oldest.
-    ///
-    /// This is for feeding the speaker, where throwing away audio that
-    /// has not played yet would be heard. Never call it from a device
-    /// callback or from the capture thread.
-    /// Returns `Timeout` if there was still no room in time, so the
-    /// caller can check whether it has been told to stop and try again.
-    /// Waiting for ever here would leave a stopping player wedged.
-    ///
-    /// Only a device backend calls this, so a build with no backend
-    /// compiled in leaves it unused.
+    /// For the speaker only, where discarding unplayed audio is heard;
+    /// never from a device callback or the capture thread.
     #[allow(dead_code, reason = "used by device backends")]
     pub fn push_before(&self, item: T, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
@@ -105,11 +95,9 @@ impl<T> Ring<T> {
         }
     }
 
-    /// Take the next item, waiting if there is none.
-    ///
-    /// `timeout` of `None` waits until an item arrives or the ring
-    /// closes. Returns `Timeout` when the limit passes and `Stopped`
-    /// when the ring closed while waiting.
+    /// Take the next item, waiting if there is none. `None` waits until
+    /// one arrives or the ring closes; `Timeout` when the limit passes,
+    /// `Stopped` when it closed while waiting.
     pub fn take(&self, timeout: Option<Duration>) -> Result<Taken<T>> {
         let deadline = timeout.map(|t| Instant::now() + t);
         let mut inner = self.lock();
@@ -148,10 +136,8 @@ impl<T> Ring<T> {
         }
     }
 
-    /// Take an item only if one is already there.
-    ///
-    /// A device callback must never wait, so this is how one drains the
-    /// queue. Unused in a build with no backend compiled in.
+    /// Take an item only if one is already there. A device callback
+    /// must never wait, so this is how it drains the queue.
     #[allow(dead_code, reason = "used by device backends")]
     pub fn try_take(&self) -> Option<Taken<T>> {
         let mut inner = self.lock();
@@ -193,10 +179,6 @@ impl<T> Ring<T> {
 
 impl<T> Ring<T> {
     /// Snapshot of everything held, oldest first, without removing it.
-    ///
-    /// This is how pre-roll reaches back into recent history. Nothing
-    /// calls it yet; the recording path that will is the next piece of
-    /// work.
     #[allow(dead_code, reason = "pre-roll will read history through this")]
     pub fn snapshot(&self) -> Vec<T>
     where

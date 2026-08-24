@@ -1,8 +1,6 @@
-//! Prints what an ONNX model expects and produces.
-//!
-//! Used to confirm a model's contract before code is written against
-//! it. Model interfaces drift between versions, and a repackaged copy
-//! may not match the one the project distributes.
+//! Prints what an ONNX model expects and produces, to confirm its
+//! contract before code is written against it. Interfaces drift, and a
+//! repackaged copy may not match the one its project distributes.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()

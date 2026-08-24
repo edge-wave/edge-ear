@@ -28,10 +28,9 @@ impl std::fmt::Display for EndReason {
     }
 }
 
-/// Something worth telling the application about.
-///
-/// These are always delivered from the dispatcher thread, never from
-/// the thread that captures or analyses audio.
+/// Something worth telling the application about. Always delivered
+/// from the dispatcher thread, never from the one that captures or
+/// analyses audio.
 #[derive(Debug, Clone)]
 pub enum Event {
     WakeDetected {

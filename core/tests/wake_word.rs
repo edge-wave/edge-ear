@@ -1,12 +1,6 @@
-//! Being told when the wake word was said.
-//!
-//! The library ships no wake word and no way to make one. An
-//! application supplies all three models, so most of what is worth
-//! checking here is what happens when it supplies the wrong thing, or
-//! nothing at all.
-//!
-//! The tests that need real models read their location from
-//! `EDGE_EAR_WAKE_DIR` and are left out of the normal run.
+//! Being told when the wake word was said. The application supplies all
+//! three models, so most of what is worth checking is what happens when
+//! it supplies the wrong thing, or nothing.
 
 use std::path::PathBuf;
 use std::time::Duration;

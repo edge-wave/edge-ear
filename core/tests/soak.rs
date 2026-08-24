@@ -1,11 +1,6 @@
-//! A long run, to catch what a short one cannot.
-//!
-//! Ignored by default because it takes an hour. Set `EDGE_EAR_SOAK_SECS`
-//! to try a shorter one first.
-//!
-//! ```text
-//! cargo test -p edge-ear-core --test soak -- --ignored --nocapture
-//! ```
+//! A long run, to catch what a short one cannot. Ignored by default
+//! because it takes an hour; `EDGE_EAR_SOAK_SECS` runs a shorter one.
+//!     cargo test -p edge-ear-core --test soak -- --ignored --nocapture
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

@@ -1,15 +1,6 @@
-//! Spotting a wake word, in three stages.
-//!
-//! Audio becomes a mel spectrogram, the spectrogram becomes general
-//! speech features, and a small model decides whether those features
-//! are the phrase it was trained on. Only the last one knows the word,
-//! and it is the only one the application supplies.
-//!
-//! Tensor names are never part of the contract. Every model exported
-//! from the training pipeline has the same shapes but its own
-//! auto-generated names, so a name in this file would work for one
-//! wake word and fail for the next. Names are read from each file when
-//! it is loaded.
+//! Spotting a wake word in three stages: audio to spectrogram, then to
+//! speech features, then to a yes or no. Only the last knows the
+//! phrase. Names inside a model are read, never assumed.
 
 use std::path::{Path, PathBuf};
 
@@ -104,13 +95,8 @@ impl Stage {
 }
 
 /// Turning frames of audio into how likely the wake word just finished.
-///
-/// Behind a trait for one reason: everything built on top of it — when
-/// a score counts, how long to look away afterwards, what happens the
-/// moment it counts — is logic worth testing without three model files
-/// in the way. A scripted stand-in makes those tests exact and quick.
-///
-/// Only one real source ships. The trait is not a way to run several.
+/// Behind a trait so that when a score counts, and what happens then,
+/// are testable without three model files in the way.
 pub trait WakeSource: Send {
     /// Feed one frame of audio. Gives a score once enough has been
     /// heard to give one.
@@ -147,11 +133,9 @@ impl WakeModel {
         })
     }
 
-    /// Load the model for the phrase to listen for.
-    ///
-    /// Its shape is checked here rather than left to fail oddly later.
-    /// A model built for a different pipeline is refused by name of
-    /// what was wrong.
+    /// Load the model for the phrase to listen for. Its shape is
+    /// checked here rather than left to fail oddly later, and a model
+    /// for another pipeline is refused by name of what was wrong.
     pub fn load_word(&mut self, path: &Path) -> Result<()> {
         let stage = Stage::load(path, "wake word")?;
 
@@ -273,10 +257,9 @@ impl WakeSource for WakeModel {
     }
 }
 
-/// Answers from a script instead of listening.
-///
-/// Tests use it to lay out exactly what the detector is told and when,
-/// so what is being checked is the deciding, not the model.
+/// Answers from a script instead of listening, so a test lays out
+/// exactly what the detector is told and when, and checks the deciding
+/// rather than the model.
 #[cfg(test)]
 pub struct ScriptedWake {
     /// One answer per call, in order. `None` stands for "not enough
@@ -348,7 +331,6 @@ mod tests {
     use super::*;
 
     /// Where the models are, for the tests that need real ones.
-    ///
     ///     EDGE_EAR_WAKE_DIR=/path/to/models \
     ///       cargo test -p edge-ear-core --lib wake -- --ignored --nocapture
     fn model_dir() -> Option<PathBuf> {

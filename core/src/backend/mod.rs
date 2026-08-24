@@ -1,10 +1,8 @@
 #[cfg(feature = "cpal-backend")]
 pub mod cpal_backend;
-/// A stand-in for real devices, for tests.
-///
-/// Public on purpose: anyone writing tests against this library needs a
-/// microphone that produces known audio on demand. It touches no
-/// hardware and reaches nothing outside the process.
+/// A stand-in for real devices. Public on purpose: anyone testing
+/// against this library needs a microphone giving known audio on
+/// demand. It touches no hardware and reaches nothing outside.
 pub mod fake;
 
 use crate::capture::Samples;
@@ -53,10 +51,9 @@ pub trait OutputStream: Send {
     fn stop(&mut self) -> Result<()>;
 }
 
-/// Where audio comes from and goes to.
-///
-/// The default implementation wraps cpal. The fake one reads files and
-/// drives time itself, so every scenario is testable without hardware.
+/// Where audio comes from and goes to. The default wraps cpal; the
+/// fake reads files and drives time itself, so every scenario is
+/// testable without hardware.
 pub trait AudioBackend: Send {
     fn open_input(&mut self, req: &FormatRequest) -> Result<Box<dyn InputStream>>;
     fn open_output(&mut self, req: &FormatRequest) -> Result<Box<dyn OutputStream>>;

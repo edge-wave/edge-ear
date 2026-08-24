@@ -1,11 +1,6 @@
-//! Every public entry point, called where it cannot succeed.
-//!
-//! Calls in the wrong order are normal application behaviour, not
-//! misuse. Each one must come back with its own named error, and none
-//! may crash, hang, or leave the handle unusable.
-//!
-//! The tables below are the point: adding an entry point without adding
-//! a row here leaves a gap nobody notices.
+//! Every public entry point, called where it cannot succeed. Wrong
+//! order is normal behaviour, not misuse: each must return its own
+//! named error and none may crash, hang, or wedge the handle.
 
 use std::time::{Duration, Instant};
 

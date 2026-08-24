@@ -1,8 +1,6 @@
-//! Sounds an application has registered, ready to play.
-//!
-//! Decoding happens once, when a sound is registered, so playing it is
-//! only a copy. Registration is allowed at any time, including while
-//! running, because it adds an asset and changes no pipeline.
+//! Sounds an application has registered, ready to play. Decoding
+//! happens once at registration, so playing is only a copy, and
+//! registering while running rebuilds no pipeline.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -21,10 +19,8 @@ use crate::player::envelope;
 
 pub type SoundId = String;
 
-/// Where a sound's audio comes from.
-///
-/// A Rust enum here. The C API turns this into a tag plus a union, in
-/// the capi crate; the core keeps the enum.
+/// Where a sound's audio comes from. A Rust enum here; the C API turns
+/// it into a tag plus a union in its own crate.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SoundSource {
     File {
