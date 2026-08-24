@@ -13,12 +13,9 @@ use crate::events::Event;
 use crate::events::dispatch::Dispatcher;
 use crate::wake::model::WakeSource;
 
-/// Decides when a score counts as hearing the wake word.
-///
-/// After one detection it ignores what follows for a while. Clearing
-/// the score is not enough on its own: the audio that caused the
-/// detection is still inside the pipeline and would cause another one
-/// immediately.
+/// Decides when a score counts as hearing the wake word, then ignores
+/// what follows for a while. Clearing the score alone is not enough:
+/// the audio behind it is still in the pipeline and would fire again.
 pub struct Detector<M: WakeSource> {
     model: M,
     threshold: f32,
@@ -40,16 +37,12 @@ impl<M: WakeSource> Detector<M> {
         self.threshold = threshold;
     }
 
-    /// Feed one frame.
-    ///
-    /// The first value is the score, whenever the pipeline has heard
-    /// enough to give one. The second says it counted as a detection.
+    /// Feed one frame. The first value is the score, once the pipeline
+    /// has heard enough to give one; the second says it counted.
     pub fn push(&mut self, frame: &[i16]) -> Result<(Option<f32>, bool)> {
-        // Counted per frame of audio, not per score. Clearing the
-        // pipeline stops it scoring at all until it refills, and a
-        // count that only moved on scores would then wait for the
-        // refill and only start afterwards, keeping the detector deaf
-        // for about twice as long as intended.
+        // Counted per frame of audio, not per score. A cleared
+        // pipeline scores nothing until it refills, so counting scores
+        // would wait that out first and stay deaf twice as long.
         let looking_away = self.settling > 0;
         if looking_away {
             self.settling -= 1;
@@ -307,12 +300,9 @@ mod tests {
         }
     }
 
-    /// The count has to move while the pipeline is empty.
-    ///
-    /// Hearing the word clears the pipeline, and a cleared pipeline
-    /// scores nothing until it refills. A count that only moved on
-    /// scores would wait out that refill and only then begin, leaving
-    /// the detector deaf for about twice the spell it was given.
+    /// The count has to move while the pipeline is empty. A cleared
+    /// pipeline scores nothing until it refills, and a count waiting
+    /// for scores would stay deaf for twice the spell it was given.
     #[test]
     fn looking_away_is_counted_in_audio_not_in_scores() {
         let mut d = detector(ScriptedWake::silent_then(10, 0.9), 0.5, 4);

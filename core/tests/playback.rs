@@ -1,7 +1,6 @@
-//! Playing sounds, and being told when one has finished.
-//!
-//! Alerts, waiting loops, and spoken replies that arrive while running
-//! all go through the single owner of the speaker.
+//! Playing sounds, and being told when one has finished. Alerts,
+//! waiting loops, and replies arriving while running all go through the
+//! single owner of the speaker.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

@@ -165,23 +165,18 @@ fn ring_chunks(format: AudioFormat, frame_samples: Option<usize>, capacity: Dura
 /// The one owner of the microphone.
 ///
 /// It reads the device once and hands every block to each enabled
-/// consumer. It never waits on a consumer, so no consumer can slow it
-/// down or slow another consumer down.
+/// consumer, never waiting on one, so no consumer can slow another.
 ///
-/// What this loop is allowed to do, checked against what it calls:
+/// What this loop may do, checked against what it calls:
 ///
-/// - **Waiting**: only on the device, in `stream.read`. Handing a block
-///   to a consumer drops the oldest instead of waiting, and raising a
-///   notification drops the oldest instead of waiting. Neither can park
-///   this thread. The waiting form of the queue is for feeding the
-///   speaker and must never be called from here.
-/// - **Locks**: each consumer's queue and the notification queue take a
-///   lock, held only long enough to move one item. No lock is ever held
-///   across user code, and no user code runs on this thread at all.
-/// - **Allocation**: one block's worth per consumer, per block. It is
-///   proportional to the block and does not grow over time. Removing it
-///   would mean pooling buffers, which is worth doing only if a
-///   measurement says it matters.
+/// - **Waiting**: only on the device, in `stream.read`. Handing over a
+///   block and raising a notification both drop the oldest instead.
+///   The waiting form of the queue feeds the speaker and belongs
+///   nowhere near here.
+/// - **Locks**: held only long enough to move one item, never across
+///   user code, and no user code runs on this thread at all.
+/// - **Allocation**: one block per consumer, per block. Bounded, and
+///   not growing. Pooling would remove it, if measurement ever asks.
 pub struct CaptureThread {
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,

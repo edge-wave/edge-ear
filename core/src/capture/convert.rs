@@ -1,8 +1,6 @@
 //! Turning what the device produces into what each consumer asked for.
-//!
-//! The device is read once, in its own format. Conversion happens per
-//! requested format, not per consumer, so two consumers wanting the
-//! same thing share the work.
+//! Read once, converted per wanted format rather than per consumer, so
+//! two asking for the same thing share the work.
 
 use rubato::audioadapter_buffers::direct::SequentialSliceOfVecs;
 use rubato::{Fft, FixedSync, Resampler};
@@ -15,10 +13,9 @@ use crate::error::{Error, Result};
 /// delay low, large enough that the transform is worth doing.
 const RESAMPLE_CHUNK: usize = 1024;
 
-/// Converts one device format into one consumer format.
-///
-/// Resampling carries state between calls, so a converter belongs to a
-/// stream and must not be reused across a stop and start.
+/// Converts one device format into one consumer format. Resampling
+/// carries state between calls, so a converter belongs to one stream
+/// and must not outlive a stop.
 pub struct Converter {
     from: AudioFormat,
     to: AudioFormat,
@@ -185,9 +182,8 @@ fn from_mono_f32(mono: &[f32], channels: u16, sample_type: SampleType) -> Sample
 }
 
 /// Gathers converted audio into the exact frame size a model needs.
-///
-/// The two detectors want different frame sizes from the same device
-/// blocks, so each keeps its own accumulator.
+/// The two detectors want different sizes from the same blocks, so each
+/// keeps its own accumulator.
 pub struct FrameAccumulator {
     /// `None` passes everything straight through, which is what the
     /// read path wants.

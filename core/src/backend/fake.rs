@@ -1,7 +1,5 @@
-//! A backend that plays back canned audio instead of touching hardware.
-//!
-//! It drives time itself, so tests run at full speed and give the same
-//! answer every run.
+//! A backend that plays canned audio instead of touching hardware. It
+//! drives time itself, so tests run fast and answer the same each run.
 
 use std::sync::{Arc, Mutex};
 
@@ -27,10 +25,9 @@ pub struct FakeSetup {
     /// A device that is open but hands over nothing. Lets a test check
     /// what a reader does while it waits.
     pub starve: bool,
-    /// Hand blocks over at the speed a real device would, rather than
-    /// as fast as the machine allows. Needed by any test asking whether
-    /// something keeps up, since keeping up is meaningless against a
-    /// device that runs flat out.
+    /// Hand blocks over at the speed a real device would. Any test
+    /// asking whether something keeps up needs this, because keeping up
+    /// means nothing against a device running flat out.
     pub paced: bool,
 }
 

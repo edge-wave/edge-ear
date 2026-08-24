@@ -1,12 +1,6 @@
-//! Python binding for edge-ear.
-//!
-//! Binds the core crate directly. It translates shapes and errors, and
-//! adds no behaviour of its own.
-//!
-//! The interpreter lock is taken in exactly one place: the thread that
-//! delivers notifications. The thread that reads the microphone never
-//! touches Python, and a read releases the lock while it waits so other
-//! Python threads keep running.
+//! Python binding for edge-ear. Binds the core crate directly, adding
+//! no behaviour. The interpreter lock is taken only on the thread
+//! delivering notifications, and a read releases it while waiting.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -358,10 +352,9 @@ impl EdgeEar {
 
     // ── reading live audio ───────────────────────────────────────────
 
-    /// Take the next block of live audio.
-    ///
-    /// Waits for audio to arrive. `timeout` is in seconds; `None` waits
-    /// until audio arrives or capture stops.
+    /// Take the next block of live audio, waiting for it to arrive.
+    /// `timeout` is in seconds; `None` waits until audio comes or
+    /// capture stops.
     #[pyo3(signature = (timeout = None))]
     fn read(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<AudioChunk> {
         let wait = timeout.map(Duration::from_secs_f64);
@@ -385,11 +378,9 @@ impl EdgeEar {
 
     // ── notifications ────────────────────────────────────────────────
 
-    /// Set the handler called for every notification.
-    ///
-    /// It runs on the thread that delivers notifications, holding the
-    /// interpreter lock only for the length of the call. A slow handler
-    /// delays later notifications and nothing else.
+    /// Set the handler called for every notification. It runs on the
+    /// delivering thread, holding the interpreter lock only for the
+    /// call, so a slow one delays later notifications and nothing else.
     fn on_event(&self, handler: Py<PyAny>) -> PyResult<()> {
         self.core
             .on_event(move |event| {
@@ -424,10 +415,8 @@ impl EdgeEar {
         self.core.load_wake_model(&path).map_err(to_py)
     }
 
-    /// Start listening for the wake word.
-    ///
-    /// Naming a sound has the library play it on detection and hold off
-    /// counting silence until it has finished.
+    /// Start listening for the wake word. Naming a sound plays it on
+    /// detection and holds off counting silence until it ends.
     #[pyo3(signature = (alert = None))]
     fn enable_wake(&self, alert: Option<&str>) -> PyResult<()> {
         self.core.enable_wake(alert).map_err(to_py)
@@ -447,10 +436,8 @@ impl EdgeEar {
         self.core.wake_alert()
     }
 
-    /// How sure the detector was, most recently.
-    ///
-    /// Every score, not only the ones that counted. Choosing how sure
-    /// it must be is guesswork without seeing the ones that fell short.
+    /// How sure the detector was, most recently. Every score, because
+    /// setting a threshold is guesswork without seeing the near misses.
     #[getter]
     fn wake_score(&self) -> Option<f32> {
         self.core.wake_score()
@@ -500,12 +487,8 @@ impl EdgeEar {
 
     // ── sound playback ───────────────────────────────────────────────
 
-    /// Register a sound, from a file or from raw audio.
-    ///
-    /// ```python
-    /// ear.register_sound("alert", path="alert.wav")
-    /// ear.register_sound("reply", pcm=data, sample_rate=24000)
-    /// ```
+    /// Register a sound, from a file or from raw audio. For example
+    /// `ear.register_sound("alert", path="alert.wav")`.
     #[pyo3(signature = (
         id, *, path = None, pcm = None,
         sample_rate = 16_000, channels = 1, sample_type = "i16", volume = 1.0

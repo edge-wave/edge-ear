@@ -1,34 +1,25 @@
-//! Deciding whether a frame of audio is speech.
-//!
-//! The decision sits behind a trait for one reason: everything built on
-//! top of it — recording, silence timing, pre-roll, why a recording
-//! ended — is logic worth testing without a model in the way. A scripted
-//! stand-in makes those tests exact and quick.
-//!
-//! Only one real model ships. The trait is not a way to run several.
+//! Deciding whether a frame of audio is speech. Behind a trait so that
+//! recording, silence timing, pre-roll, and why a recording ended can
+//! all be tested without a model in the way. Only one model ships.
 
 use crate::config::AudioFormat;
 use crate::error::{Error, Result};
 
-/// Turns one frame of audio into how likely it is to be speech.
-///
-/// Implementations carry state between calls, so one belongs to one
-/// recording and must be reset when a new recording opens.
+/// Turns one frame of audio into how likely it is to be speech. State
+/// carries between calls, so one belongs to one recording and must be
+/// reset when the next opens.
 pub trait SpeechModel: Send {
     /// How likely this frame is speech, from 0.0 to 1.0.
     fn probability(&mut self, frame: &[i16]) -> Result<f32>;
 
-    /// Forget everything heard so far.
-    ///
-    /// A recording must start from nothing. State left over from the
-    /// previous recording changes the decision on this one.
+    /// Forget everything heard so far. A recording must start from
+    /// nothing: state left over from the last one changes this one.
     fn reset(&mut self);
 }
 
-/// A stand-in that answers from a script instead of listening.
-///
-/// Tests use it to lay out speech and silence exactly, so what is being
-/// checked is the timing and the decisions, not the model.
+/// A stand-in that answers from a script instead of listening, so a
+/// test lays out speech and silence exactly and checks the timing and
+/// the decisions rather than the model.
 #[cfg(test)]
 pub struct ScriptedModel {
     /// One probability per call, in order. Once used up, the last value
@@ -119,21 +110,16 @@ mod tests {
     }
 }
 
-/// The model this library ships, run through ONNX Runtime.
-///
-/// Its interface is fixed by the model file: one window of audio, a
-/// recurrent state carried between calls, and the sample rate. Model
-/// interfaces drift between versions, so a copy from anywhere but the
-/// project that publishes it may not match.
+/// The model this library ships, run through ONNX Runtime: a window of
+/// audio, a state carried between calls, and the sample rate. Copies
+/// from anywhere but the publishing project may not match.
 pub struct SileroModel {
     session: ort::session::Session,
     /// Shape [2, 1, 128], carried from one call to the next.
     state: Vec<f32>,
-    /// The tail of the last window, put in front of the next one.
-    ///
-    /// The model is handed context plus frame, not the frame alone. Its
-    /// input length is not fixed in the file, so leaving the context off
-    /// is accepted without complaint and quietly answers nothing.
+    /// The tail of the last window, put in front of the next one. The
+    /// input length is not fixed in the file, so leaving this off is
+    /// accepted without complaint and quietly answers nothing.
     context: Vec<f32>,
     sample_rate: u32,
 }
@@ -229,15 +215,9 @@ impl SpeechModel for SileroModel {
 mod silero_tests {
     use super::*;
 
-    /// Loads the bundled model, so it is slower than the rest and kept
-    /// out of the normal run.
-    /// The shape of the bundled model, checked directly.
-    ///
-    /// Other projects ship a model under a similar name with a
-    /// different shape: two state tensors instead of one, wider
-    /// windows, and no sample rate input. Swapping one in would break
-    /// this library in ways the behaviour tests would not name. This
-    /// says exactly what the file must look like.
+    /// Exactly what the bundled model must look like. Others ship one
+    /// under a similar name with two state tensors and no sample rate,
+    /// which would break this in ways no behaviour test would name.
     #[test]
     #[ignore]
     fn the_bundled_model_has_the_shape_this_code_expects() {
@@ -291,10 +271,9 @@ mod silero_tests {
         );
     }
 
-    /// The model is handed the tail of the previous window along with
-    /// the new one. Leaving that off is accepted without complaint and
-    /// makes the model answer nothing to everything, which is how this
-    /// went unnoticed once already.
+    /// The tail of the previous window goes in with the new one.
+    /// Leaving it off is accepted quietly and makes the model answer
+    /// nothing to everything, which is how this hid once already.
     #[test]
     #[ignore]
     fn the_tail_of_each_window_is_carried_into_the_next() {
@@ -360,9 +339,7 @@ mod silero_tests {
     }
 }
 
-/// Diagnostics for when the library says one thing and your ears say
-/// another. Point them at a recording and see what the model decides.
-///
+/// For when the library says one thing and your ears say another.
 ///     EDGE_EAR_WAV=/path/to/speech.wav \
 ///       cargo test -p edge-ear-core --lib what_the_model_hears -- --ignored --nocapture
 #[cfg(test)]

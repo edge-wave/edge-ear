@@ -1,11 +1,6 @@
-//! How long the library takes to pass word of something along.
-//!
-//! Both targets are about the library's own share: the gap between the
-//! moment it knows and the moment the application is told. What a model
-//! needs before it can know is the model's business, not this one's.
-//!
-//! Run with `--nocapture` to see the numbers rather than only whether
-//! they passed.
+//! How long the library takes to pass word of something along: the gap
+//! between the moment it knows and the moment the application is told.
+//! Run with `--nocapture` to see the numbers.
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -80,12 +75,9 @@ fn the_end_of_a_recording_is_passed_on_promptly() {
     );
 }
 
-/// Under load the notification must still be prompt.
-///
-/// Nothing here is about a slow handler. Handlers run one after another
-/// on a single thread, so one that takes half a second necessarily
-/// holds up the next one sent to it. What it must not hold up is audio,
-/// and `independence.rs` is where that is checked.
+/// Under load the notification must still be prompt. Not about a slow
+/// handler: those run one after another and necessarily hold up the
+/// next. What they must not hold up is audio, checked elsewhere.
 #[test]
 fn reading_hard_does_not_delay_the_notification() {
     let ear = Arc::new(paced_ear());

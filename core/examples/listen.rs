@@ -1,13 +1,6 @@
-//! Listens on the real microphone and prints what it hears.
-//!
-//! Shows every path at once: a level meter drawn from the raw read
-//! path, and a line whenever the wake word is heard, the alert
-//! finishes, or the detector decides speech has ended. One being busy
-//! never stops the others, which is the point.
-//!
-//! Run `cargo run --example listen -- help` for the arguments. The
-//! bare `--` is where cargo stops reading arguments for itself and
-//! passes the rest along.
+//! Listens on the real microphone and prints what it hears: a level
+//! meter, plus a line for the wake word, the alert, and the end of
+//! speech. Run with `-- help` for the arguments.
 
 use std::io::Write;
 use std::path::PathBuf;

@@ -1,8 +1,6 @@
-//! One slow consumer cannot break the others.
-//!
-//! This is the promise that makes the library safe to embed. Nothing
-//! here adds capability; it checks that what is already built holds up
-//! when one part of it misbehaves.
+//! One slow consumer cannot break the others. This is the promise that
+//! makes the library safe to embed, so nothing here adds capability: it
+//! checks that what is built holds when one part misbehaves.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

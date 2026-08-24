@@ -1,8 +1,6 @@
-//! Callback delivery, kept away from the audio path.
-//!
-//! Producers only enqueue, which is bounded and quick. One dispatcher
-//! thread drains the queue and runs the application's handler, so a
-//! handler that blocks delays later events and nothing else.
+//! Callback delivery, kept away from the audio path. Producers only
+//! enqueue; one thread drains and runs the handler, so a handler that
+//! blocks delays later events and nothing else.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
@@ -99,10 +97,9 @@ impl Dispatcher {
         lock(&self.shared.queue).dropped
     }
 
-    /// Stop the dispatcher and wait for it.
-    ///
-    /// Called from inside a handler this would deadlock, so it detects
-    /// that case and leaves the thread to finish on its own.
+    /// Stop the dispatcher and wait for it. Called from inside a
+    /// handler this would deadlock, so that case is detected and the
+    /// thread left to finish on its own.
     pub fn shutdown(&self) {
         lock(&self.shared.queue).closed = true;
         self.shared.ready.notify_all();
@@ -132,9 +129,8 @@ fn run(shared: Arc<Shared>) {
             let mut queue = lock(&shared.queue);
             loop {
                 // Take nothing until there is somewhere to deliver it.
-                // Draining into a missing handler would throw the event
-                // away, and an application that sets its handler a
-                // moment after creating the handle would miss events.
+                // Draining into a missing handler throws events away,
+                // and a handler set a moment later would miss them.
                 let ready = lock(&shared.handler).is_some() && !queue.items.is_empty();
                 if ready {
                     let event = queue.items.pop_front().expect("checked above");

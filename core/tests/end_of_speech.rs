@@ -1,7 +1,6 @@
-//! Capturing a spoken request without deciding when it ended.
-//!
-//! An application opens a recording and is handed the audio once the
-//! speaker goes quiet, together with why the recording ended.
+//! Capturing a spoken request without deciding when it ended. The
+//! application opens a recording and is handed the audio once the
+//! speaker goes quiet, with the reason it ended.
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -83,11 +82,9 @@ fn exactly_one_ending_arrives_per_recording() {
 
 #[test]
 fn the_application_can_end_a_recording_itself() {
-    // A device that produces nothing, so no audio time passes and the
-    // only thing that can end this recording is the application. The
-    // detector counts the audio it was given, not the clock on the
-    // wall, so a device that runs flat out would reach a timeout at
-    // once.
+    // A device producing nothing, so no audio time passes and only the
+    // application can end this. The detector counts audio, not the wall
+    // clock, so one running flat out would time out at once.
     let ear = EdgeEar::with_backend(Box::new(FakeBackend::starving())).expect("handle");
     let seen = endings(&ear);
     ear.enable_speech().unwrap();
@@ -169,10 +166,9 @@ fn reading_audio_still_works_while_a_recording_is_open() {
     ear.start().unwrap();
     ear.start_recording().unwrap();
 
-    // What matters here is that the read path keeps serving while a
+    // What matters is that the read path keeps serving while a
     // recording is open. Whether this reader keeps up is a separate
-    // question, and the fake device produces audio as fast as it can
-    // rather than at the speed a real one would.
+    // question against a device running flat out.
     for _ in 0..10 {
         let chunk = ear.read(Some(Duration::from_secs(2))).expect("audio");
         assert!(!chunk.samples.is_empty(), "the read path went quiet");

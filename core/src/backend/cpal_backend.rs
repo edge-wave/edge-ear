@@ -1,13 +1,6 @@
-//! The default backend: real devices through cpal.
-//!
-//! cpal pushes audio from its own thread; the rest of this library
-//! pulls. The bridge is a bounded queue, so the device callback hands
-//! its block over and returns at once. It never waits on us, and we
-//! never wait on it.
-//!
-//! The cpal stream is built, played, and dropped on one thread of its
-//! own and never crosses a thread boundary. That sidesteps the
-//! question of whether a given platform's stream can be moved.
+//! The default backend: real devices through cpal. It pushes, we pull,
+//! and a bounded queue bridges the two so neither waits on the other.
+//! Its stream lives on one thread and never crosses to another.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
@@ -77,14 +70,9 @@ impl Default for CpalBackend {
     }
 }
 
-/// Turn a device failure into one of the three outcomes an application
-/// must be able to tell apart.
-///
-/// A refused microphone is guessed from the message, the only signal
-/// cpal gives. On macOS a refusal may open fine and deliver silence
-/// instead, in which case nothing reaches here and a refusal looks like
-/// a quiet room. Telling those apart means asking the system for the
-/// authorisation status, which is platform work not yet done.
+/// Sort a device failure into the outcomes an application must tell
+/// apart, guessed from the message. On macOS a refusal may instead open
+/// and deliver silence, never reaching here and looking like quiet.
 fn classify(device: Device, message: &str) -> Error {
     let lowered = message.to_ascii_lowercase();
     if lowered.contains("permission")
@@ -205,10 +193,8 @@ impl OutputStream for CpalOutput {
     }
 
     fn write(&mut self, samples: &Samples) -> Result<()> {
-        // Wait for room rather than dropping the oldest: audio that has
-        // not played yet would be heard going missing. The wait is
-        // bounded so a stopping player is never left wedged; the caller
-        // retries after checking whether it should stop.
+        // Wait for room rather than drop: unplayed audio going missing
+        // is audible. Bounded, so a stopping player is never wedged.
         self.queue
             .push_before(samples.clone(), Duration::from_millis(100))
     }

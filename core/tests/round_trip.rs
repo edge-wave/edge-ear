@@ -1,8 +1,6 @@
-//! The whole hands-free journey: the wake word is heard, the alert
-//! plays, the speaker talks, they stop, and the audio arrives.
-//!
-//! This is the only place the four parts are asked to work as one
-//! thing rather than each on its own.
+//! The whole hands-free journey: the wake word, the alert, the talking,
+//! the stopping, the audio. The only place the four parts are asked to
+//! work as one thing rather than each on its own.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
