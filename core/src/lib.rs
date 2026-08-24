@@ -169,13 +169,15 @@ impl EdgeEar {
             Arc::clone(&self.dispatcher),
         )?);
 
-        // Releasing the alert gate happens here rather than in the
-        // application's handler, so a slow handler cannot let the tail
-        // of the alert be counted as speech.
-        if let (Some(player), Some(alert)) = (inner.player.as_ref(), inner.alert.clone()) {
+        // Here rather than in the application's handler, so a slow one
+        // cannot let the tail of an alert count as speech. Every sound
+        // also closes off the history behind it.
+        if let Some(player) = inner.player.as_ref() {
             let speech = Arc::clone(&speech);
+            let alert = inner.alert.clone();
             player.on_finished(move |id| {
-                if id == alert {
+                speech.block_history();
+                if alert.as_deref() == Some(id) {
                     speech.start_counting();
                 }
             });
@@ -218,15 +220,15 @@ impl EdgeEar {
                                 match found {
                                     Ok(sound) => {
                                         player.play(sound, false);
-                                        speech.open_recording(Vec::new(), false);
+                                        speech.open_recording(Duration::ZERO, false);
                                     }
                                     // The alert was released since it
                                     // was named. Nothing to wait for.
-                                    Err(_) => speech.open_recording(Vec::new(), true),
+                                    Err(_) => speech.open_recording(Duration::ZERO, true),
                                 }
                             }
                             // Without one there is nothing to wait for.
-                            _ => speech.open_recording(Vec::new(), true),
+                            _ => speech.open_recording(Duration::ZERO, true),
                         }
                     }) as wake::OnWake
                 };
@@ -418,10 +420,9 @@ impl EdgeEar {
         let speech = inner.speech.as_ref().ok_or(Error::NotRunning)?;
         speech.set_limits(inner.config.tunable.clone());
 
-        // Pre-roll reaches back into audio already collected. Off by
+        // Pre-roll reaches back into audio already gone by. Off by
         // default, because that stretch may hold an alert sound.
-        let pre_roll = self.recent_audio(&inner);
-        speech.open_recording(pre_roll, true);
+        speech.open_recording(inner.config.tunable.pre_roll, true);
         Ok(())
     }
 
@@ -435,37 +436,6 @@ impl EdgeEar {
             .ok_or(Error::NotRunning)?
             .stop_recording();
         Ok(())
-    }
-
-    /// Audio from just before now, as much as pre-roll asks for and the
-    /// history holds. A history shorter than that yields what exists.
-    fn recent_audio(&self, inner: &Inner) -> Vec<i16> {
-        let wanted = inner.config.tunable.pre_roll;
-        if wanted.is_zero() {
-            return Vec::new();
-        }
-        let Some(consumer) = inner.consumer(ConsumerKind::Speech) else {
-            return Vec::new();
-        };
-        let format = consumer.format;
-        let per_chunk_secs = |chunk: &AudioChunk| chunk.duration().as_secs_f64();
-
-        let mut held = consumer.ring.snapshot();
-        let mut taken: Vec<i16> = Vec::new();
-        let mut seconds = 0.0;
-        while let Some(chunk) = held.pop() {
-            if seconds >= wanted.as_secs_f64() {
-                break;
-            }
-            seconds += per_chunk_secs(&chunk);
-            if let Some(samples) = chunk.samples.as_i16() {
-                let mut front = samples.to_vec();
-                front.extend_from_slice(&taken);
-                taken = front;
-            }
-        }
-        let _ = format;
-        taken
     }
 
     /// Turn one consumer on or off. Takes effect on the next block and
@@ -540,6 +510,11 @@ impl EdgeEar {
         let inner = self.alive_mut()?;
         if let Some(player) = inner.player.as_ref() {
             player.stop_sound();
+        }
+        // Still heard by the microphone, and nothing reports the end
+        // of a sound that never reached it.
+        if let Some(speech) = inner.speech.as_ref() {
+            speech.block_history();
         }
         Ok(())
     }

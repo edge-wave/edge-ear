@@ -39,6 +39,13 @@ pub struct Detector<M: SpeechModel> {
     silence_run: Duration,
     elapsed: Duration,
     open: bool,
+    /// Audio gone by, kept so a recording can reach back into it.
+    /// Trimmed to what the largest allowed pre-roll could ask for.
+    history: Vec<i16>,
+    history_limit: usize,
+    /// Samples at the front of the history that a recording must not
+    /// reach into, because the library's own playback is in them.
+    blocked: usize,
 }
 
 impl<M: SpeechModel> Detector<M> {
@@ -52,20 +59,44 @@ impl<M: SpeechModel> Detector<M> {
             silence_run: Duration::ZERO,
             elapsed: Duration::ZERO,
             open: false,
+            history: Vec::new(),
+            history_limit: 0,
+            blocked: 0,
         }
     }
 
-    /// Begin a recording.
-    ///
-    /// `pre_roll` is audio from before this moment, already collected
-    /// elsewhere. `counting` is false when an alert sound is still
-    /// playing: audio is kept, but silence is not counted until the
-    /// sound has finished.
-    pub fn open(&mut self, pre_roll: Vec<i16>, counting: bool) {
+    /// Everything heard so far is off limits to pre-roll, because the
+    /// microphone heard the sound the library just played.
+    pub fn block_history(&mut self) {
+        self.blocked = self.history.len();
+    }
+
+    /// The most history any recording may reach back into.
+    pub fn set_history_limit(&mut self, longest: Duration) {
+        self.history_limit = self.samples_in(longest);
+        let keep = self.history_limit;
+        if self.history.len() > keep {
+            let gone = self.history.len() - keep;
+            self.history.drain(..gone);
+            self.blocked = self.blocked.saturating_sub(gone);
+        }
+    }
+
+    fn samples_in(&self, span: Duration) -> usize {
+        let frames = span.as_secs_f64() * self.format.sample_rate as f64;
+        frames as usize * self.format.channels.max(1) as usize
+    }
+
+    /// Begin a recording. `pre_roll` reaches back into audio gone by.
+    /// `counting` is false while an alert plays: audio is kept, but
+    /// silence waits for the sound to finish.
+    pub fn open(&mut self, pre_roll: Duration, counting: bool) {
         // The model carries state between calls. Left alone, what it
         // heard during the last recording would colour this one.
         self.model.reset();
-        self.audio = pre_roll;
+        let reachable = self.history.len() - self.blocked;
+        let wanted = self.samples_in(pre_roll).min(reachable);
+        self.audio = self.history[self.history.len() - wanted..].to_vec();
         self.counting = counting;
         self.speech_seen = false;
         self.silence_run = Duration::ZERO;
@@ -86,6 +117,16 @@ impl<M: SpeechModel> Detector<M> {
     /// Feed one frame. Returns the finished recording when this frame
     /// ended it.
     pub fn push(&mut self, frame: &[i16], limits: &TunableConfig) -> Result<Option<Recording>> {
+        // Kept whether or not a recording is open. The point of
+        // history is having it before anyone asks.
+        if self.history_limit > 0 {
+            self.history.extend_from_slice(frame);
+            if self.history.len() > self.history_limit {
+                let gone = self.history.len() - self.history_limit;
+                self.history.drain(..gone);
+                self.blocked = self.blocked.saturating_sub(gone);
+            }
+        }
         if !self.open {
             return Ok(None);
         }
@@ -185,7 +226,7 @@ mod tests {
     fn speech_then_quiet_ends_on_silence() {
         // Ten frames of speech, then quiet.
         let mut d = detector(ScriptedModel::speech_then_silence(10));
-        d.open(Vec::new(), true);
+        d.open(Duration::ZERO, true);
 
         let done = run(&mut d, &limits(320, 30_000, 10_000));
         assert_eq!(done.reason, EndReason::Silence);
@@ -200,7 +241,7 @@ mod tests {
         let mut script = vec![0.9, 0.9, 0.0, 0.0, 0.9, 0.9];
         script.push(0.0);
         let mut d = detector(ScriptedModel::new(script));
-        d.open(Vec::new(), true);
+        d.open(Duration::ZERO, true);
 
         // The gap is shorter than the silence the detector waits for.
         let done = run(&mut d, &limits(320, 30_000, 10_000));
@@ -216,7 +257,7 @@ mod tests {
     #[test]
     fn talking_past_the_cap_ends_on_length() {
         let mut d = detector(ScriptedModel::always_speaking());
-        d.open(Vec::new(), true);
+        d.open(Duration::ZERO, true);
 
         let done = run(&mut d, &limits(3_000, 320, 10_000));
         assert_eq!(done.reason, EndReason::MaxLength);
@@ -226,7 +267,7 @@ mod tests {
     #[test]
     fn saying_nothing_ends_on_the_no_speech_timeout() {
         let mut d = detector(ScriptedModel::silent());
-        d.open(Vec::new(), true);
+        d.open(Duration::ZERO, true);
 
         let done = run(&mut d, &limits(3_000, 30_000, 320));
         assert_eq!(done.reason, EndReason::NoSpeech);
@@ -235,7 +276,7 @@ mod tests {
     #[test]
     fn the_application_can_end_it_itself() {
         let mut d = detector(ScriptedModel::always_speaking());
-        d.open(Vec::new(), true);
+        d.open(Duration::ZERO, true);
         d.push(&[100; FRAME], &limits(3_000, 30_000, 10_000))
             .unwrap();
 
@@ -248,13 +289,13 @@ mod tests {
     #[test]
     fn opening_a_recording_makes_the_model_forget() {
         let mut d = detector(ScriptedModel::speech_then_silence(4));
-        d.open(Vec::new(), true);
+        d.open(Duration::ZERO, true);
         assert_eq!(d.model.resets, 1);
 
         let l = limits(320, 30_000, 10_000);
         let first = run(&mut d, &l);
 
-        d.open(Vec::new(), true);
+        d.open(Duration::ZERO, true);
         assert_eq!(d.model.resets, 2, "the second recording reset it again");
         let second = run(&mut d, &l);
 
@@ -264,24 +305,51 @@ mod tests {
     }
 
     #[test]
-    fn pre_roll_audio_is_kept_at_the_front() {
+    fn audio_from_before_the_open_leads_the_recording() {
         let mut d = detector(ScriptedModel::speech_then_silence(2));
-        let earlier = vec![7i16; 1000];
-        d.open(earlier.clone(), true);
+        d.set_history_limit(Duration::from_millis(100));
 
+        // Heard before anyone asked for a recording.
+        let earlier = [7i16; FRAME];
+        d.push(&earlier, &limits(320, 30_000, 10_000)).unwrap();
+
+        d.open(Duration::from_millis(FRAME as u64 / 16), true);
         let done = run(&mut d, &limits(320, 30_000, 10_000));
         assert_eq!(
-            &done.audio[..1000],
+            &done.audio[..FRAME],
             &earlier[..],
             "the earlier audio should lead"
         );
     }
 
     #[test]
+    fn history_is_not_kept_when_no_recording_will_want_it() {
+        let mut d = detector(ScriptedModel::always_speaking());
+        d.push(&[7; FRAME], &limits(320, 30_000, 10_000)).unwrap();
+
+        d.open(Duration::from_millis(500), true);
+        let done = run(&mut d, &limits(320, 30_000, 10_000));
+        assert!(
+            !done.audio.starts_with(&[7; FRAME]),
+            "kept history nobody had asked for"
+        );
+    }
+
+    #[test]
+    fn history_no_longer_than_asked_for_is_kept() {
+        let mut d = detector(ScriptedModel::always_speaking());
+        d.set_history_limit(Duration::from_millis(20));
+        for _ in 0..10 {
+            d.push(&[7; FRAME], &limits(320, 30_000, 10_000)).unwrap();
+        }
+        assert_eq!(d.history.len(), 320, "history outgrew what was allowed");
+    }
+
+    #[test]
     fn silence_is_not_counted_until_the_alert_sound_has_finished() {
         let mut d = detector(ScriptedModel::silent());
         // Opened while an alert is still playing.
-        d.open(Vec::new(), false);
+        d.open(Duration::ZERO, false);
 
         let l = limits(320, 30_000, 320);
         // Far past every limit, but nothing is being counted yet.
@@ -302,7 +370,7 @@ mod tests {
     #[test]
     fn audio_is_still_collected_while_the_alert_plays() {
         let mut d = detector(ScriptedModel::silent());
-        d.open(Vec::new(), false);
+        d.open(Duration::ZERO, false);
         for _ in 0..5 {
             d.push(&[100; FRAME], &limits(320, 30_000, 10_000)).unwrap();
         }
@@ -317,7 +385,7 @@ mod tests {
     #[test]
     fn the_length_cap_holds_even_while_the_alert_plays() {
         let mut d = detector(ScriptedModel::always_speaking());
-        d.open(Vec::new(), false);
+        d.open(Duration::ZERO, false);
         // Nothing is being counted, but memory must still not grow
         // without limit.
         let done = run(&mut d, &limits(3_000, 320, 10_000));
@@ -340,11 +408,12 @@ mod tests {
 #[derive(Default)]
 struct Control {
     /// A recording should open, with this audio in front of it.
-    open: Option<(Vec<i16>, bool)>,
+    open: Option<(Duration, bool)>,
     /// The open recording should end now.
     stop: bool,
     /// The alert sound has finished; start counting silence.
     start_counting: bool,
+    block_history: bool,
     limits: TunableConfig,
 }
 
@@ -398,7 +467,7 @@ impl SpeechThread {
         })
     }
 
-    pub fn open_recording(&self, pre_roll: Vec<i16>, counting: bool) {
+    pub fn open_recording(&self, pre_roll: Duration, counting: bool) {
         self.lock().open = Some((pre_roll, counting));
     }
 
@@ -417,6 +486,11 @@ impl SpeechThread {
     #[allow(dead_code, reason = "the alert gate is wired up with wake")]
     pub fn start_counting(&self) {
         self.lock().start_counting = true;
+    }
+
+    /// The library has just played something the microphone heard.
+    pub fn block_history(&self) {
+        self.lock().block_history = true;
     }
 
     pub fn set_limits(&self, limits: TunableConfig) {
@@ -462,16 +536,23 @@ fn run(
             Err(_) => break,
         };
 
-        let (opening, should_stop, counting, limits) = {
+        let (opening, should_stop, counting, block, limits) = {
             let mut c = control.lock().unwrap_or_else(|e| e.into_inner());
             (
                 c.open.take(),
                 std::mem::take(&mut c.stop),
                 std::mem::take(&mut c.start_counting),
+                std::mem::take(&mut c.block_history),
                 c.limits.clone(),
             )
         };
 
+        detector.set_history_limit(limits.pre_roll);
+        // Before any opening, so a recording asked for in the same
+        // breath cannot reach back over the sound.
+        if block {
+            detector.block_history();
+        }
         if let Some((pre_roll, counting_now)) = opening {
             detector.open(pre_roll, counting_now);
             open.store(true, Ordering::Relaxed);
