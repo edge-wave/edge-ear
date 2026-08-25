@@ -1,3 +1,877 @@
-//! C API for edge-ear. Empty on purpose; work starts when a C user
-//! exists. It will bind the core crate directly, the same way the
-//! Python crate does, rather than sit on top of it.
+//! C API for edge-ear. Binds the core crate directly, adding nothing.
+//! One promise covers every call: handles come from `edge_ear_new`
+//! unfreed, pointers are good for the call, strings are terminated.
+#![allow(clippy::missing_safety_doc)]
+
+mod convert;
+mod error;
+mod events;
+
+use std::ffi::{CString, c_char, c_void};
+use std::path::Path;
+use std::sync::Mutex;
+
+use edge_ear_core::EdgeEar;
+use edge_ear_core::SoundSource;
+use edge_ear_core::config::{AudioFormat, SampleType, Target};
+
+use convert::{duration, optional_str, out_ptr, required_str};
+use error::*;
+use events::{Registered, edge_ear_event_cb};
+
+/// The handle a C caller holds. Opaque on that side, and named the way
+/// C wants to read it rather than the way Rust would spell it.
+#[allow(non_camel_case_types)]
+pub struct edge_ear_h {
+    core: EdgeEar,
+    /// Strings handed out by name, kept alive until the next call that
+    /// replaces them. Nothing here is ever freed by the caller.
+    borrowed: Mutex<Borrowed>,
+}
+
+#[derive(Default)]
+struct Borrowed {
+    alert: Option<CString>,
+    devices: Vec<CString>,
+    listed: Vec<edge_ear_device>,
+}
+
+impl edge_ear_h {
+    /// Keep the alert name alive for the caller to read.
+    fn remember_alert(&self, name: Option<String>) -> *const c_char {
+        let mut held = self.borrowed.lock().unwrap_or_else(|e| e.into_inner());
+        match name.and_then(|n| CString::new(n).ok()) {
+            Some(text) => {
+                held.alert = Some(text);
+                held.alert.as_ref().map_or(std::ptr::null(), |t| t.as_ptr())
+            }
+            None => {
+                held.alert = None;
+                std::ptr::null()
+            }
+        }
+    }
+}
+
+/// Run a body against a handle, or report a null one.
+macro_rules! with {
+    ($ear:expr, $name:ident => $body:expr) => {{
+        if $ear.is_null() {
+            return fail_with(EDGE_EAR_NULL_ARGUMENT, "the handle must not be null");
+        }
+        let $name = unsafe { &*$ear };
+        $body
+    }};
+}
+
+/// Unwrap a converted argument, or return the code it failed with.
+macro_rules! ok_or_return {
+    ($result:expr) => {
+        match $result {
+            Ok(value) => value,
+            Err(code) => return code,
+        }
+    };
+}
+
+// ---- errors ----------------------------------------------------
+
+/// @brief The message behind the last failing call on this thread.
+///
+/// @return The message, borrowed until the next call on this thread
+///         fails. Empty when nothing has failed yet.
+#[unsafe(no_mangle)]
+pub extern "C" fn edge_ear_last_error() -> *const c_char {
+    last_message()
+}
+
+// ---- handle ----------------------------------------------------
+
+/// @brief Make a handle.
+///
+/// @return The handle, or NULL when no device could be reached. On
+///         NULL, edge_ear_last_error() says why.
+/// @see edge_ear_free
+#[unsafe(no_mangle)]
+pub extern "C" fn edge_ear_new() -> *mut edge_ear_h {
+    match EdgeEar::new() {
+        Ok(core) => Box::into_raw(Box::new(edge_ear_h {
+            core,
+            borrowed: Mutex::default(),
+        })),
+        Err(e) => {
+            fail(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// @brief Release the handle and everything it owns.
+///
+/// Must not run alongside another call on the same handle, or from
+/// inside a handler.
+///
+/// @param[in] ear the handle, or NULL to do nothing
+/// @see edge_ear_new
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_free(ear: *mut edge_ear_h) {
+    if ear.is_null() {
+        return;
+    }
+    let owned = unsafe { Box::from_raw(ear) };
+    owned.core.destroy();
+}
+
+/// @brief Open the microphone and begin reading.
+///
+/// Formats and devices are fixed from here until the handle is stopped.
+///
+/// @param[in] ear the handle
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_stop, edge_ear_read
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_start(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => report(e.core.start()))
+}
+
+/// @brief Release the microphone and the speaker.
+///
+/// The handle can be set up and started again afterwards.
+///
+/// @param[in] ear the handle
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_start
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_stop(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => report(e.core.stop()))
+}
+
+/// @brief Whether capture is running.
+///
+/// @param[in] ear the handle
+/// @return 1 while running, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
+///         null handle.
+/// @see edge_ear_start
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_is_running(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => i32::from(e.core.is_running()))
+}
+
+// ---- reading audio ---------------------------------------------
+
+/// @brief Take the next block of live audio.
+///
+/// A block larger than `cap` is refused rather than truncated, so
+/// nothing is ever lost without being told.
+///
+/// @param[in] ear the handle
+/// @param[out] buf where the samples go
+/// @param[in]  cap how many samples fit in `buf`
+/// @param[in]  timeout_ms how long to wait; below zero waits until
+///             audio arrives or capture stops
+/// @param[out] got how many samples were written
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_set_format
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_read(
+    ear: *mut edge_ear_h,
+    buf: *mut i16,
+    cap: usize,
+    timeout_ms: i32,
+    got: *mut usize,
+) -> i32 {
+    with!(ear, e => {
+        let got = ok_or_return!(out_ptr(got, "got"));
+        if buf.is_null() {
+            return fail_with(EDGE_EAR_NULL_ARGUMENT, "the buffer must not be null");
+        }
+        let wait = (timeout_ms >= 0)
+            .then(|| std::time::Duration::from_millis(timeout_ms as u64));
+
+        let chunk = match e.core.read(wait) {
+            Ok(chunk) => chunk,
+            Err(err) => return fail(&err),
+        };
+        let Some(samples) = chunk.samples.as_i16() else {
+            return fail_with(
+                EDGE_EAR_UNSUPPORTED_FORMAT,
+                "the read format is not 16-bit; set it before starting",
+            );
+        };
+        if samples.len() > cap {
+            *got = 0;
+            return fail_with(
+                EDGE_EAR_INVALID_VALUE,
+                &format!("the buffer holds {cap} samples, the block has {}", samples.len()),
+            );
+        }
+        // Safe: the caller promised `cap` samples of room and the
+        // length was just checked against it.
+        unsafe { std::ptr::copy_nonoverlapping(samples.as_ptr(), buf, samples.len()) };
+        *got = samples.len();
+        OK
+    })
+}
+
+// ---- notifications ---------------------------------------------
+
+/// @brief Set the handler called for every notification.
+///
+/// It runs on the one thread that delivers notifications, so a slow
+/// handler holds up later notifications only. It may call back in.
+///
+/// @param[in] ear the handle
+/// @param[in] callback the handler, or NULL to remove the current one
+/// @param[in] user passed to the handler untouched; the caller keeps it
+///            alive until the handle is freed
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_on_event(
+    ear: *mut edge_ear_h,
+    callback: edge_ear_event_cb,
+    user: *mut c_void,
+) -> i32 {
+    with!(ear, e => {
+        let registered = Registered { callback, user };
+        report(e.core.on_event(move |event| registered.deliver(event)))
+    })
+}
+
+// ---- wake word --------------------------------------------------
+
+/// @brief Supply the two models every wake word shares.
+///
+/// Neither knows any word, and neither ships with this library.
+///
+/// @param[in] ear the handle
+/// @param[in] spectrogram path to the melspectrogram model
+/// @param[in] features path to the speech embedding model
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_load_wake_model
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_load_wake_features(
+    ear: *mut edge_ear_h,
+    spectrogram: *const c_char,
+    features: *const c_char,
+) -> i32 {
+    with!(ear, e => {
+        let one = ok_or_return!(required_str(spectrogram, "the spectrogram path"));
+        let two = ok_or_return!(required_str(features, "the features path"));
+        report(e.core.load_wake_features(Path::new(one), Path::new(two)))
+    })
+}
+
+/// @brief Supply the model for the phrase to listen for.
+///
+/// Its shape is checked here, and a model built for another pipeline is
+/// refused by name of what was wrong.
+///
+/// @param[in] ear the handle
+/// @param[in] path path to the wake word model
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_load_wake_features, edge_ear_enable_wake
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_load_wake_model(
+    ear: *mut edge_ear_h,
+    path: *const c_char,
+) -> i32 {
+    with!(ear, e => {
+        let path = ok_or_return!(required_str(path, "the model path"));
+        report(e.core.load_wake_model(Path::new(path)))
+    })
+}
+
+/// @brief Start listening for the wake word.
+///
+/// @param[in] ear the handle
+/// @param[in] alert a registered sound to play on detection, or NULL.
+///            Naming one also holds off counting silence until it ends,
+///            so its tail is not taken for speech
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_disable_wake, edge_ear_register_sound_file
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_enable_wake(ear: *mut edge_ear_h, alert: *const c_char) -> i32 {
+    with!(ear, e => {
+        let alert = ok_or_return!(optional_str(alert, "the alert name"));
+        report(e.core.enable_wake(alert))
+    })
+}
+
+/// @brief Stop listening for the wake word.
+///
+/// The models stay loaded.
+///
+/// @param[in] ear the handle
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_enable_wake
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_disable_wake(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => report(e.core.disable_wake()))
+}
+
+/// @brief Whether the wake word is being listened for.
+///
+/// @param[in] ear the handle
+/// @return 1 when listening, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
+///         null handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_is_wake_enabled(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => i32::from(e.core.is_wake_enabled()))
+}
+
+/// @brief Clear what the detector has heard and look away.
+///
+/// The same as if the word had just been heard.
+///
+/// @param[in] ear the handle
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_set_wake_settle_frames
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_reset_wake(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => report(e.core.reset_wake()))
+}
+
+/// @brief How sure the detector was, most recently.
+///
+/// Every score, not only the ones that counted, because choosing a
+/// threshold is guesswork without seeing the near misses.
+///
+/// @param[in] ear the handle
+/// @param[out] score where the score goes, from 0.0 to 1.0
+/// @return #EDGE_EAR_OK, or #EDGE_EAR_NOT_RUNNING when nothing has
+///         scored yet.
+/// @see edge_ear_set_wake_threshold
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_wake_score(ear: *mut edge_ear_h, score: *mut f32) -> i32 {
+    with!(ear, e => {
+        let score = ok_or_return!(out_ptr(score, "score"));
+        match e.core.wake_score() {
+            Some(value) => { *score = value; OK }
+            None => fail_with(EDGE_EAR_NOT_RUNNING, "nothing has been scored yet"),
+        }
+    })
+}
+
+/// @brief The sound played on detection.
+///
+/// @param[in] ear the handle
+/// @param[out] alert where the name goes, or NULL when none was named.
+///             Borrowed until the next call replaces it
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_enable_wake
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_wake_alert(
+    ear: *mut edge_ear_h,
+    alert: *mut *const c_char,
+) -> i32 {
+    with!(ear, e => {
+        let out = ok_or_return!(out_ptr(alert, "alert"));
+        *out = e.remember_alert(e.core.wake_alert());
+        OK
+    })
+}
+
+/// @brief How sure the detector must be before it says it heard.
+///
+/// @param[in] ear the handle
+/// @param[in] value from 0.0 to 1.0
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_wake_score
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_wake_threshold(ear: *mut edge_ear_h, value: f32) -> i32 {
+    with!(ear, e => report(e.core.set_wake_threshold(value)))
+}
+
+/// @brief How long to look away after hearing the word.
+///
+/// Long enough that the same words are not heard twice on their way out
+/// of the pipeline.
+///
+/// @param[in] ear the handle
+/// @param[in] frames how many frames of 80 ms to ignore
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_reset_wake
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_wake_settle_frames(ear: *mut edge_ear_h, frames: u32) -> i32 {
+    with!(ear, e => report(e.core.set_wake_settle_frames(frames)))
+}
+
+// ---- speech and recording ---------------------------------------
+
+/// @brief Start watching for the end of speech.
+///
+/// Takes effect on the next block of audio.
+///
+/// @param[in] ear the handle
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_disable_speech, edge_ear_start_recording
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_enable_speech(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => report(e.core.enable_speech()))
+}
+
+/// @brief Stop watching for speech.
+///
+/// Any open recording is dropped.
+///
+/// @param[in] ear the handle
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_enable_speech
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_disable_speech(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => report(e.core.disable_speech()))
+}
+
+/// @brief Whether speech and silence are being watched for.
+///
+/// @param[in] ear the handle
+/// @return 1 when watching, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
+///         null handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_is_speech_enabled(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => i32::from(e.core.is_speech_enabled()))
+}
+
+/// @brief Open a recording.
+///
+/// It ends on silence, on the no-speech timeout, at the length cap, or
+/// when stopped, and the audio arrives as a notification.
+///
+/// @param[in] ear the handle
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_stop_recording, edge_ear_set_pre_roll
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_start_recording(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => report(e.core.start_recording()))
+}
+
+/// @brief End the open recording.
+///
+/// One notification follows, saying it was stopped rather than that the
+/// speaker went quiet.
+///
+/// @param[in] ear the handle
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_start_recording
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_stop_recording(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => report(e.core.stop_recording()))
+}
+
+/// @brief Whether a recording is collecting audio.
+///
+/// @param[in] ear the handle
+/// @return 1 while recording, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
+///         null handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_is_recording(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => i32::from(e.core.is_recording()))
+}
+
+/// @brief How readily audio counts as speech.
+///
+/// @param[in] ear the handle
+/// @param[in] value from 0.0 to 1.0
+/// @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
+///         open, or another negative #edge_ear_error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_speech_threshold(ear: *mut edge_ear_h, value: f32) -> i32 {
+    with!(ear, e => report(e.core.set_speech_threshold(value)))
+}
+
+/// @brief How long the speaker must be quiet before a recording ends.
+///
+/// @param[in] ear the handle
+/// @param[in] seconds greater than zero
+/// @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
+///         open, or another negative #edge_ear_error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_silence_duration(ear: *mut edge_ear_h, seconds: f64) -> i32 {
+    with!(ear, e => {
+        let span = ok_or_return!(duration(seconds, "the silence duration"));
+        report(e.core.set_silence_duration(span))
+    })
+}
+
+/// @brief The longest a recording may run before it is handed over.
+///
+/// @param[in] ear the handle
+/// @param[in] seconds greater than the silence duration
+/// @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
+///         open, or another negative #edge_ear_error.
+/// @see edge_ear_set_silence_duration
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_max_recording(ear: *mut edge_ear_h, seconds: f64) -> i32 {
+    with!(ear, e => {
+        let span = ok_or_return!(duration(seconds, "the maximum recording length"));
+        report(e.core.set_max_recording(span))
+    })
+}
+
+/// @brief How long to wait for anyone to speak at all.
+///
+/// @param[in] ear the handle
+/// @param[in] seconds greater than zero
+/// @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
+///         open, or another negative #edge_ear_error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_no_speech_timeout(ear: *mut edge_ear_h, seconds: f64) -> i32 {
+    with!(ear, e => {
+        let span = ok_or_return!(duration(seconds, "the no-speech timeout"));
+        report(e.core.set_no_speech_timeout(span))
+    })
+}
+
+/// @brief How much audio from before the recording to include.
+///
+/// So a word begun early is not cut off. Reaching back stops at any
+/// sound this library played, because the microphone heard it.
+///
+/// @param[in] ear the handle
+/// @param[in] seconds no more than the queue capacity
+/// @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
+///         open, or another negative #edge_ear_error.
+/// @see edge_ear_set_ring_capacity
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_pre_roll(ear: *mut edge_ear_h, seconds: f64) -> i32 {
+    with!(ear, e => {
+        let span = ok_or_return!(duration(seconds, "the pre-roll"));
+        report(e.core.set_pre_roll(span))
+    })
+}
+
+// ---- sounds ------------------------------------------------------
+
+/// @brief Register a sound read from a file.
+///
+/// Decoding happens now, so playing it later is only a copy. Allowed
+/// while running.
+///
+/// @param[in] ear the handle
+/// @param[in] id the name to play it by later
+/// @param[in] path a wav or ogg file
+/// @param[in] volume from 0.0 to 1.0
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_play_sound, edge_ear_unregister_sound
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_register_sound_file(
+    ear: *mut edge_ear_h,
+    id: *const c_char,
+    path: *const c_char,
+    volume: f32,
+) -> i32 {
+    with!(ear, e => {
+        let id = ok_or_return!(required_str(id, "the sound name"));
+        let path = ok_or_return!(required_str(path, "the sound path"));
+        let source = SoundSource::File { path: path.into() };
+        report(e.core.register_sound(id, source, volume))
+    })
+}
+
+/// @brief Register a sound from raw audio the caller already holds.
+///
+/// The samples are copied, so they may be freed once this returns.
+///
+/// @param[in] ear the handle
+/// @param[in] id the name to play it by later
+/// @param[in] data 16-bit samples
+/// @param[in] len how many samples `data` holds
+/// @param[in] sample_rate the rate those samples were taken at
+/// @param[in] channels 1 or 2
+/// @param[in] volume from 0.0 to 1.0
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_play_sound, edge_ear_unregister_sound
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_register_sound_pcm(
+    ear: *mut edge_ear_h,
+    id: *const c_char,
+    data: *const i16,
+    len: usize,
+    sample_rate: u32,
+    channels: u16,
+    volume: f32,
+) -> i32 {
+    with!(ear, e => {
+        let id = ok_or_return!(required_str(id, "the sound name"));
+        if data.is_null() {
+            return fail_with(EDGE_EAR_NULL_ARGUMENT, "the audio must not be null");
+        }
+        // Safe: the caller promised `len` samples at `data` for this call.
+        let samples = unsafe { std::slice::from_raw_parts(data, len) }.to_vec();
+        let source = SoundSource::Pcm {
+            data: samples,
+            sample_rate,
+            channels,
+            sample_type: SampleType::I16,
+        };
+        report(e.core.register_sound(id, source, volume))
+    })
+}
+
+/// @brief Forget a registered sound.
+///
+/// One already playing is left to finish.
+///
+/// @param[in] ear the handle
+/// @param[in] id the name it was registered under
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_register_sound_file
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_unregister_sound(ear: *mut edge_ear_h, id: *const c_char) -> i32 {
+    with!(ear, e => {
+        let id = ok_or_return!(required_str(id, "the sound name"));
+        report(e.core.unregister_sound(id))
+    })
+}
+
+/// @brief Play a registered sound.
+///
+/// @param[in] ear the handle
+/// @param[in] id the name it was registered under
+/// @param[in] repeat non-zero loops it until stopped
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_stop_sound, edge_ear_is_playing
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_play_sound(
+    ear: *mut edge_ear_h,
+    id: *const c_char,
+    repeat: i32,
+) -> i32 {
+    with!(ear, e => {
+        let id = ok_or_return!(required_str(id, "the sound name"));
+        report(e.core.play_sound(id, repeat != 0))
+    })
+}
+
+/// @brief Stop whatever is playing.
+///
+/// No finished notification follows, because the sound did not reach
+/// its own end.
+///
+/// @param[in] ear the handle
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_play_sound
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_stop_sound(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => report(e.core.stop_sound()))
+}
+
+/// @brief Whether a sound is coming out of the speaker.
+///
+/// @param[in] ear the handle
+/// @return 1 while playing, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
+///         null handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_is_playing(ear: *mut edge_ear_h) -> i32 {
+    with!(ear, e => i32::from(e.core.is_playing()))
+}
+
+// ---- devices -----------------------------------------------------
+
+/// One device. Both strings are borrowed until the next listing call
+/// on the same handle.
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub struct edge_ear_device {
+    /// What to pass to `edge_ear_set_input_device`. Stable across runs.
+    pub id: *const c_char,
+    /// What to show a person. Two devices may share one.
+    pub name: *const c_char,
+    /// One when the system would pick this without being asked.
+    pub is_default: i32,
+}
+
+fn list_devices(
+    ear: &edge_ear_h,
+    found: edge_ear_core::error::Result<Vec<edge_ear_core::backend::DeviceInfo>>,
+    devices: *mut *const edge_ear_device,
+    count: *mut usize,
+) -> i32 {
+    let devices = match out_ptr(devices, "devices") {
+        Ok(slot) => slot,
+        Err(code) => return code,
+    };
+    let count = match out_ptr(count, "count") {
+        Ok(slot) => slot,
+        Err(code) => return code,
+    };
+    let found = match found {
+        Ok(found) => found,
+        Err(e) => return fail(&e),
+    };
+
+    let mut held = ear.borrowed.lock().unwrap_or_else(|e| e.into_inner());
+    held.devices.clear();
+    held.listed.clear();
+    for device in &found {
+        held.devices
+            .push(CString::new(device.id.as_str()).unwrap_or_default());
+        held.devices
+            .push(CString::new(device.name.as_str()).unwrap_or_default());
+    }
+    // Pointers first: the strings they point at must not move again
+    // before the list is built from them.
+    let listed: Vec<edge_ear_device> = found
+        .iter()
+        .enumerate()
+        .map(|(index, device)| edge_ear_device {
+            id: held.devices[index * 2].as_ptr(),
+            name: held.devices[index * 2 + 1].as_ptr(),
+            is_default: i32::from(device.is_default),
+        })
+        .collect();
+    held.listed = listed;
+    *devices = held.listed.as_ptr();
+    *count = held.listed.len();
+    OK
+}
+
+/// @brief Every microphone the system offers.
+///
+/// @param[in] ear the handle
+/// @param[out] devices where the list goes, borrowed until the next
+///             listing call on this handle
+/// @param[out] count how many devices the list holds
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_set_input_device
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_input_devices(
+    ear: *mut edge_ear_h,
+    devices: *mut *const edge_ear_device,
+    count: *mut usize,
+) -> i32 {
+    with!(ear, e => list_devices(e, e.core.input_devices(), devices, count))
+}
+
+/// @brief Every speaker the system offers.
+///
+/// @param[in] ear the handle
+/// @param[out] devices where the list goes, borrowed until the next
+///             listing call on this handle
+/// @param[out] count how many devices the list holds
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_set_output_device
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_output_devices(
+    ear: *mut edge_ear_h,
+    devices: *mut *const edge_ear_device,
+    count: *mut usize,
+) -> i32 {
+    with!(ear, e => list_devices(e, e.core.output_devices(), devices, count))
+}
+
+/// @brief Choose a microphone.
+///
+/// The name is taken as given and checked when capture starts.
+///
+/// @param[in] ear the handle
+/// @param[in] id an identifier from edge_ear_input_devices(), or NULL
+///            for the system default
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_input_devices
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_input_device(ear: *mut edge_ear_h, id: *const c_char) -> i32 {
+    with!(ear, e => {
+        let id = ok_or_return!(optional_str(id, "the device identifier"));
+        report(e.core.set_input_device(id))
+    })
+}
+
+/// @brief Choose a speaker.
+///
+/// The name is taken as given and checked when capture starts.
+///
+/// @param[in] ear the handle
+/// @param[in] id an identifier from edge_ear_output_devices(), or NULL
+///            for the system default
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_output_devices
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_output_device(
+    ear: *mut edge_ear_h,
+    id: *const c_char,
+) -> i32 {
+    with!(ear, e => {
+        let id = ok_or_return!(optional_str(id, "the device identifier"));
+        report(e.core.set_output_device(id))
+    })
+}
+
+// ---- formats ------------------------------------------------------
+
+#[repr(i32)]
+#[derive(Clone, Copy)]
+/// Which of the three readers of live audio a setting is about.
+#[allow(non_camel_case_types)]
+pub enum edge_ear_target {
+    /// The wake word detector. Takes 16 kHz mono 16-bit only.
+    EDGE_EAR_TARGET_WAKE = 1,
+    /// The speech detector. Takes 16 or 8 kHz mono 16-bit.
+    EDGE_EAR_TARGET_SPEECH,
+    /// What `edge_ear_read` hands over. Any format the resampler can
+    /// produce.
+    EDGE_EAR_TARGET_READ,
+}
+
+#[repr(i32)]
+#[derive(Clone, Copy)]
+/// How one sample of audio is written.
+#[allow(non_camel_case_types)]
+pub enum edge_ear_sample_type {
+    /// Signed 16-bit. What `edge_ear_read` requires.
+    EDGE_EAR_SAMPLE_TYPE_I16 = 1,
+    /// 32-bit float between -1 and 1.
+    EDGE_EAR_SAMPLE_TYPE_F32,
+}
+
+/// @brief Set the audio format one consumer receives.
+///
+/// Only before capture starts: once it runs the conversion pipeline is
+/// built and changing this would mean rebuilding it.
+///
+/// @param[in] ear the handle
+/// @param[in] target which consumer this is about
+/// @param[in] sample_rate in hertz
+/// @param[in] channels 1 or 2
+/// @param[in] sample_type how one sample is written
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_read
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_format(
+    ear: *mut edge_ear_h,
+    target: edge_ear_target,
+    sample_rate: u32,
+    channels: u16,
+    sample_type: edge_ear_sample_type,
+) -> i32 {
+    with!(ear, e => {
+        let target = match target {
+            edge_ear_target::EDGE_EAR_TARGET_WAKE => Target::Wake,
+            edge_ear_target::EDGE_EAR_TARGET_SPEECH => Target::Speech,
+            edge_ear_target::EDGE_EAR_TARGET_READ => Target::Read,
+        };
+        let sample_type = match sample_type {
+            edge_ear_sample_type::EDGE_EAR_SAMPLE_TYPE_I16 => SampleType::I16,
+            edge_ear_sample_type::EDGE_EAR_SAMPLE_TYPE_F32 => SampleType::F32,
+        };
+        let format = AudioFormat::new(sample_rate, channels, sample_type);
+        report(e.core.set_format(target, format))
+    })
+}
+
+/// @brief How much recent audio each queue keeps.
+///
+/// This is the ceiling on the pre-roll.
+///
+/// @param[in] ear the handle
+/// @param[in] seconds at least as long as the pre-roll
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_set_pre_roll
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_ring_capacity(ear: *mut edge_ear_h, seconds: f64) -> i32 {
+    with!(ear, e => {
+        let span = ok_or_return!(duration(seconds, "the queue capacity"));
+        report(e.core.set_ring_capacity(span))
+    })
+}
