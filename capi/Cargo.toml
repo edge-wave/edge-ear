@@ -1,6 +1,6 @@
 [package]
 name = "edge-ear-capi"
-description = "C API for edge-ear. Placeholder until a C user exists."
+description = "C API for edge-ear."
 publish = false
 version.workspace = true
 edition.workspace = true
@@ -10,7 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [lib]
-crate-type = ["rlib"]
+crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
 edge-ear-core.workspace = true

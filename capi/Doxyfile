@@ -1,0 +1,22 @@
+# Documentation for the C API.
+#
+#     doxygen capi/Doxyfile        (writes capi/docs/html)
+
+PROJECT_NAME           = "edge-ear"
+PROJECT_BRIEF          = "A local audio front end"
+INPUT                  = capi/include
+OUTPUT_DIRECTORY       = capi/docs
+GENERATE_LATEX         = NO
+GENERATE_HTML          = YES
+QUIET                  = YES
+
+OPTIMIZE_OUTPUT_FOR_C  = YES
+TYPEDEF_HIDES_STRUCT   = YES
+EXTRACT_ALL            = NO
+
+# Every entry is written up, so anything missing is worth hearing about.
+WARN_IF_UNDOCUMENTED   = YES
+
+# The header carries no @param or @return. Argument names say what they
+# are, and what they cannot say is in the sentence above them.
+WARN_NO_PARAMDOC       = YES

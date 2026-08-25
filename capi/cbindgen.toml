@@ -1,0 +1,43 @@
+language = "C"
+style = "type"
+include_guard = "EDGE_EAR_H"
+cpp_compat = true
+tab_width = 4
+documentation_style = "doxy"
+sys_includes = ["stddef.h", "stdint.h"]
+no_includes = true
+
+header = """
+/**
+ * @file
+ * @brief edge-ear: a local audio front end.
+ *
+ * Generated from the Rust source by cbindgen; do not
+ * edit. Regenerate with:
+ *     cbindgen --config capi/cbindgen.toml --crate edge-ear-capi \
+ *         --output capi/include/edge_ear.h
+ *
+ * Errors: every fallible call returns int. 0 is success, negative names
+ * the failure, and edge_ear_last_error() describes the most recent one
+ * on this thread.
+ *
+ * Memory: the caller owns everything it passes in, and the library
+ * hands out nothing the caller must free. Strings out are borrowed for
+ * the length of the call unless said otherwise.
+ *
+ * const: handles are never const. Reading one can still write to it,
+ * because anything handed back as a borrowed string is kept there, and
+ * a promise the compiler cannot check is worse than none.
+ *
+ * Threads: a handle is usable from several threads. edge_ear_free is
+ * the exception, and must not run alongside another call on the same
+ * handle or from inside a handler.
+ */
+"""
+
+[export]
+prefix = ""
+include = ["edge_ear_error"]
+
+[enum]
+prefix_with_name = false
