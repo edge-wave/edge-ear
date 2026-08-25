@@ -1,0 +1,57 @@
+//! Builds the C tests and runs them. Ignored by default: it needs a C
+//! compiler, a release build of the library, and a microphone.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the crate sits inside the workspace")
+        .to_path_buf()
+}
+
+/// Compile one C file against the built library and run it.
+fn build_and_run(source: &str, args: &[&str]) -> String {
+    let root = root();
+    let library = root.join("target/release/libedge_ear_capi.a");
+    assert!(
+        library.exists(),
+        "build it first: cargo build -p edge-ear-capi --release"
+    );
+
+    let binary = std::env::temp_dir().join(format!("edge_ear_{}", source.replace('.', "_")));
+    let built = Command::new("cc")
+        .current_dir(&root)
+        .args(["-I", "capi/include", "-Wall", "-Wextra", "-Werror", "-O2"])
+        .arg(format!("capi/tests/{source}"))
+        .arg(&library)
+        .args(["-lasound", "-lpthread", "-ldl", "-lm", "-lstdc++"])
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .expect("a C compiler must be installed");
+    assert!(
+        built.status.success(),
+        "compiling {source} failed:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let ran = Command::new(&binary)
+        .args(args)
+        .output()
+        .expect("the compiled test runs");
+    let output = String::from_utf8_lossy(&ran.stdout).to_string();
+    assert!(ran.status.success(), "{source} failed:\n{output}");
+    output
+}
+
+#[test]
+#[ignore = "needs a C compiler, a release build, and a microphone"]
+fn every_entry_point_behaves_from_c() {
+    let output = build_and_run("surface.c", &[]);
+    assert!(
+        output.contains("every entry point behaved"),
+        "unexpected output:\n{output}"
+    );
+}
