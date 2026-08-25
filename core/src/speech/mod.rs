@@ -23,11 +23,8 @@ pub struct Recording {
 }
 
 /// Tracks one recording from the moment it opens to the moment it ends.
-///
-/// Collecting audio and counting silence are deliberately separate. An
-/// alert sound played on wake must not be counted as speech, but the
-/// audio from that stretch may still be wanted, so one can start before
-/// the other.
+/// Collecting audio and counting silence are separate, because an alert
+/// must not count as speech though its stretch may still be wanted.
 pub struct Detector<M: SpeechModel> {
     model: M,
     format: AudioFormat,
@@ -417,11 +414,9 @@ struct Control {
     limits: TunableConfig,
 }
 
-/// Runs speech detection away from the capture thread.
-///
-/// Detection is inference, and inference takes as long as it takes.
-/// Doing it where audio is read would stall every other consumer, so it
-/// happens here instead, reading from its own queue.
+/// Runs speech detection away from the capture thread. Inference takes
+/// as long as it takes, and doing it where audio is read would stall
+/// every other consumer, so it happens here from its own queue.
 pub struct SpeechThread {
     control: Arc<Mutex<Control>>,
     stop: Arc<AtomicBool>,

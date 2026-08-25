@@ -1,18 +1,14 @@
-//! A local, real-time audio front end.
-//!
-//! It captures a microphone, spots a wake word, notices when speech has
-//! ended, and plays sounds. It does not understand speech, and it never
-//! reaches the network.
+//! A local, real-time audio front end: it captures a microphone, spots
+//! a wake word, notices when speech has ended, and plays sounds. It
+//! understands no speech and never reaches the network.
 
 pub mod backend;
 pub mod config;
 pub mod error;
 pub mod events;
 
-// Machinery, not surface. An application never builds a capture thread
-// or a player itself; it drives them through the handle below. Keeping
-// these crate-only is what makes "one owner per device" a rule the
-// compiler holds, rather than one the documentation asks for.
+// Machinery, not surface. Crate-only, so "one owner per device" is a
+// rule the compiler holds rather than one the documentation asks for.
 pub(crate) mod capture;
 pub(crate) mod player;
 pub(crate) mod speech;
@@ -279,9 +275,7 @@ impl EdgeEar {
 
     // ── reading live audio ───────────────────────────────────────────
 
-    /// Take the next block of live audio.
-    ///
-    /// Works between `start` and `stop` whether or not any detector is
+    /// Take the next block of live audio, whether or not a detector is
     /// switched on. `None` waits until audio arrives or capture stops.
     pub fn read(&self, timeout: Option<Duration>) -> Result<AudioChunk> {
         let ring = {
@@ -307,10 +301,9 @@ impl EdgeEar {
 
     // ── wake word ────────────────────────────────────────────────────
 
-    /// Supply the two models every wake word shares.
-    ///
-    /// Neither knows any word. Neither is shipped here, because their
-    /// terms are not the ones this library is offered under.
+    /// Supply the two models every wake word shares. Neither knows any
+    /// word, and neither is shipped here, because their terms are not
+    /// the ones this library is offered under.
     pub fn load_wake_features(&self, spectrogram: &Path, features: &Path) -> Result<()> {
         let mut inner = self.stopped_only("the wake word models")?;
         // Checked now rather than at the next start, so a wrong path is
@@ -320,10 +313,9 @@ impl EdgeEar {
         Ok(())
     }
 
-    /// Supply the model for the phrase to listen for.
-    ///
-    /// Its shape is checked here. Names inside it are not: every model
-    /// has its own, and any of them works.
+    /// Supply the model for the phrase to listen for. Its shape is
+    /// checked here; names inside it are not, since every model has its
+    /// own and any of them works.
     pub fn load_wake_model(&self, path: &Path) -> Result<()> {
         let mut inner = self.stopped_only("the wake word model")?;
         let (spectrogram, features) = inner.wake_models.clone().ok_or(Error::NoWakeModel)?;
@@ -333,11 +325,9 @@ impl EdgeEar {
         Ok(())
     }
 
-    /// Start listening for the wake word.
-    ///
-    /// Naming a sound plays it on detection and holds off counting
-    /// silence until it ends, so its tail is not taken for speech.
-    /// Without a model loaded this says so instead.
+    /// Start listening for the wake word. Naming a sound plays it on
+    /// detection and holds off counting silence until it ends, so its
+    /// tail is not taken for speech.
     pub fn enable_wake(&self, alert: Option<&str>) -> Result<()> {
         {
             let mut inner = self.alive_mut()?;
@@ -365,10 +355,8 @@ impl EdgeEar {
         self.lock().alert.clone()
     }
 
-    /// How sure the detector was, most recently.
-    ///
-    /// Every score, not only the ones that counted, because setting a
-    /// threshold is guesswork without seeing the ones that fell short.
+    /// How sure the detector was, most recently: every score, because
+    /// setting a threshold is guesswork without seeing the near misses.
     pub fn wake_score(&self) -> Option<f32> {
         self.lock().wake.as_ref().and_then(|w| w.last_score())
     }
@@ -394,10 +382,8 @@ impl EdgeEar {
 
     // ── speech detection ─────────────────────────────────────────────
 
-    /// Start listening for the end of speech.
-    ///
-    /// Works before or after capture starts, and takes effect on the
-    /// next block of audio.
+    /// Start listening for the end of speech. Works before or after
+    /// capture starts, taking effect on the next block of audio.
     pub fn enable_speech(&self) -> Result<()> {
         self.set_consumer(ConsumerKind::Speech, true)
     }
@@ -464,10 +450,9 @@ impl EdgeEar {
 
     // ── sound playback ───────────────────────────────────────────────
 
-    /// Register a sound so it can be played later.
-    ///
-    /// Allowed while running, because it adds an asset and rebuilds no
-    /// pipeline. A reply that arrives at run time can be played.
+    /// Register a sound so it can be played later. Allowed while
+    /// running, because it adds an asset and rebuilds no pipeline, so a
+    /// reply arriving at run time can be played.
     pub fn register_sound(&self, id: &str, source: SoundSource, volume: f32) -> Result<()> {
         let output = self.ensure_player()?;
         let inner = self.alive_mut()?;
@@ -601,10 +586,8 @@ impl EdgeEar {
 
     // ── events ───────────────────────────────────────────────────────
 
-    /// Set the handler for every notification.
-    ///
-    /// It runs on the dispatcher thread. A slow handler delays later
-    /// events and nothing else.
+    /// Set the handler for every notification. It runs on the
+    /// dispatcher thread, so a slow one delays later events only.
     pub fn on_event(&self, handler: impl Fn(Event) + Send + Sync + 'static) -> Result<()> {
         self.alive()?;
         self.dispatcher.set_handler(Box::new(handler));
@@ -613,10 +596,9 @@ impl EdgeEar {
 
     // ── configuration ────────────────────────────────────────────────
 
-    /// Set the audio format one consumer receives.
-    ///
-    /// Only before capture starts: once it is running the conversion
-    /// pipeline is built and changing it would mean rebuilding it.
+    /// Set the audio format one consumer receives. Only before capture
+    /// starts, because once it runs the conversion pipeline is built
+    /// and changing this would mean rebuilding it.
     pub fn set_format(&self, target: Target, format: AudioFormat) -> Result<()> {
         format.validate_for(target)?;
         let mut inner = self.stopped_only("the audio format")?;
@@ -666,10 +648,8 @@ impl EdgeEar {
     }
 
     /// How long the detector looks away after hearing the wake word,
-    /// counted in frames of 80 ms.
-    ///
-    /// Long enough that what was just heard is not heard again on its
-    /// way out. Longer than that is time spent unable to hear more.
+    /// in frames of 80 ms. Long enough that what was just heard is not
+    /// heard again; longer is time spent unable to hear more.
     pub fn set_wake_settle_frames(&self, frames: u32) -> Result<()> {
         self.tune(|c| c.tunable.wake_settle_frames = frames)
     }
@@ -685,11 +665,9 @@ impl EdgeEar {
         Ok(())
     }
 
-    /// How readily audio counts as speech.
-    ///
-    /// These next five shape a recording, and a recording follows the
-    /// rules it opened with. Changing one while a recording is open is
-    /// refused, so a call that returns success has always done something.
+    /// How readily audio counts as speech. These next five shape a
+    /// recording, which follows the rules it opened with, so changing
+    /// one while a recording is open is refused rather than ignored.
     pub fn set_speech_threshold(&self, value: f32) -> Result<()> {
         self.tune_recording("the speech threshold", |c| {
             c.tunable.speech_threshold = value
