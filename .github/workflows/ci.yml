@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the audio headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+
+      # rust-toolchain.toml pins the version, so this only fetches it.
+      - name: Fetch the pinned toolchain
+        run: rustup show
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ matrix.os }}-cargo-
+
+      - name: Formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+      # A runner has no microphone, so this links the C sources without
+      # running them. The link line is platform specific.
+      - name: The C sources still link
+        run: |
+          cargo build -p edge-ear-capi --release
+          cargo test -p edge-ear-capi --test c_surface -- --ignored --exact \
+            everything_written_in_c_still_links
+
+      - name: The committed header matches the source
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cbindgen --locked
+          cargo test -p edge-ear-capi --test header_is_current -- --ignored
+
+  python:
+    name: python wheel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install the audio headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+
+      - run: pip install "maturin>=1.14,<2.0"
+
+      # The Python tests open real devices, which a runner has none of,
+      # so this proves the package builds and no more.
+      - name: Build the wheel
+        if: runner.os == 'Linux'
+        run: maturin build -m py/Cargo.toml --compatibility linux
+
+      - name: Build the wheel
+        if: runner.os == 'macOS'
+        run: maturin build -m py/Cargo.toml
