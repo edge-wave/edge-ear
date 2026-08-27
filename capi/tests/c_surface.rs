@@ -11,6 +11,32 @@ fn root() -> PathBuf {
         .to_path_buf()
 }
 
+/// What the static library needs underneath it, which is the audio
+/// stack and the C++ runtime the inference engine is written in.
+fn system_libraries() -> &'static [&'static str] {
+    if cfg!(target_os = "macos") {
+        &[
+            "-lpthread",
+            "-lm",
+            "-lc++",
+            "-lobjc",
+            "-liconv",
+            "-framework",
+            "AudioToolbox",
+            "-framework",
+            "CoreAudio",
+            "-framework",
+            "CoreFoundation",
+            "-framework",
+            "Foundation",
+            "-framework",
+            "CoreML",
+        ]
+    } else {
+        &["-lasound", "-lpthread", "-ldl", "-lm", "-lstdc++"]
+    }
+}
+
 /// Compile one C file against the built library and run it.
 fn build_and_run(source: &str, args: &[&str]) -> String {
     let root = root();
@@ -26,7 +52,7 @@ fn build_and_run(source: &str, args: &[&str]) -> String {
         .args(["-I", "capi/include", "-Wall", "-Wextra", "-Werror", "-O2"])
         .arg(format!("capi/tests/{source}"))
         .arg(&library)
-        .args(["-lasound", "-lpthread", "-ldl", "-lm", "-lstdc++"])
+        .args(system_libraries())
         .arg("-o")
         .arg(&binary)
         .output()
