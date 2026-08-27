@@ -37,8 +37,9 @@ fn system_libraries() -> &'static [&'static str] {
     }
 }
 
-/// Compile one C file against the built library and run it.
-fn build_and_run(source: &str, args: &[&str]) -> String {
+/// Compile one C file, named from the workspace root, against the
+/// built library.
+fn build(source: &str) -> PathBuf {
     let root = root();
     let library = root.join("target/release/libedge_ear_capi.a");
     assert!(
@@ -46,11 +47,12 @@ fn build_and_run(source: &str, args: &[&str]) -> String {
         "build it first: cargo build -p edge-ear-capi --release"
     );
 
-    let binary = std::env::temp_dir().join(format!("edge_ear_{}", source.replace('.', "_")));
+    let name = source.replace(['/', '.'], "_");
+    let binary = std::env::temp_dir().join(format!("edge_ear_{name}"));
     let built = Command::new("cc")
         .current_dir(&root)
         .args(["-I", "capi/include", "-Wall", "-Wextra", "-Werror", "-O2"])
-        .arg(format!("capi/tests/{source}"))
+        .arg(source)
         .arg(&library)
         .args(system_libraries())
         .arg("-o")
@@ -62,7 +64,12 @@ fn build_and_run(source: &str, args: &[&str]) -> String {
         "compiling {source} failed:\n{}",
         String::from_utf8_lossy(&built.stderr)
     );
+    binary
+}
 
+/// Compile one C file and run it.
+fn build_and_run(source: &str, args: &[&str]) -> String {
+    let binary = build(source);
     let ran = Command::new(&binary)
         .args(args)
         .output()
@@ -72,10 +79,19 @@ fn build_and_run(source: &str, args: &[&str]) -> String {
     output
 }
 
+/// The link line differs from one platform to the next, and nothing
+/// else in the workspace would notice it going stale.
+#[test]
+#[ignore = "needs a C compiler and a release build"]
+fn everything_written_in_c_still_links() {
+    build("capi/tests/surface.c");
+    build("capi/examples/listen.c");
+}
+
 #[test]
 #[ignore = "needs a C compiler, a release build, and a microphone"]
 fn every_entry_point_behaves_from_c() {
-    let output = build_and_run("surface.c", &[]);
+    let output = build_and_run("capi/tests/surface.c", &[]);
     assert!(
         output.contains("every entry point behaved"),
         "unexpected output:\n{output}"
