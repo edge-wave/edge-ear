@@ -64,10 +64,11 @@ impl Dispatcher {
     /// Replace the handler. Events raised before one is set stay
     /// queued, so setting it a moment late loses nothing.
     pub fn set_handler(&self, handler: Handler) {
+        // Held because the dispatcher decides under this lock whether
+        // to park, and a wake before that wait would be lost.
+        let queue = lock(&self.shared.queue);
         *lock(&self.shared.handler) = Some(Arc::new(handler));
-        // Wake the dispatcher: it parks while there is nowhere to
-        // deliver, and a queue full of events will not wake it by
-        // itself.
+        drop(queue);
         self.shared.ready.notify_all();
     }
 
