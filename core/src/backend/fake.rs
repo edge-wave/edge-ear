@@ -134,6 +134,9 @@ struct FakeInput {
     starve: bool,
     /// How long one block covers, waited out before handing it over.
     pace: Option<std::time::Duration>,
+    /// When the next block is due. Absolute, so a late block does not
+    /// push every block after it later still.
+    due: Option<std::time::Instant>,
 }
 
 impl InputStream for FakeInput {
@@ -159,7 +162,17 @@ impl InputStream for FakeInput {
         // test can run as long as it likes.
         block.resize(self.block, 0);
         if let Some(pace) = self.pace {
-            std::thread::sleep(pace);
+            // A real device buffers while the machine is busy instead
+            // of slowing down, so catch up rather than sleeping again.
+            let due = self.due.get_or_insert_with(std::time::Instant::now);
+            *due += pace;
+            let now = std::time::Instant::now();
+            if *due > now {
+                std::thread::sleep(*due - now);
+            } else if now - *due > std::time::Duration::from_secs(1) {
+                // Further behind than any reader keeps history for.
+                *due = now;
+            }
         }
         Ok(Samples::I16(block))
     }
@@ -209,6 +222,7 @@ impl AudioBackend for FakeBackend {
             format: self.setup.input_format.unwrap_or(AudioFormat::mono_16k()),
             stopped: false,
             starve: self.setup.starve,
+            due: None,
             pace: self.setup.paced.then(|| {
                 let format = self.setup.input_format.unwrap_or(AudioFormat::mono_16k());
                 let frames = self.setup.block_samples.max(1) / format.channels.max(1) as usize;
