@@ -7,9 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use edge_ear_core::EdgeEar;
-use edge_ear_core::SoundSource;
 use edge_ear_core::backend::fake::FakeBackend;
-use edge_ear_core::config::SampleType;
 use edge_ear_core::events::Event;
 
 const RATE: f64 = 16_000.0;
@@ -115,72 +113,4 @@ fn asking_for_more_than_the_history_holds_is_refused() {
         .set_pre_roll(Duration::from_secs(30))
         .expect_err("30 s of history is more than the queue keeps");
     assert!(err.to_string().contains("pre-roll"), "{err}");
-}
-
-/// Pre-roll reaches into audio the microphone collected, and while a
-/// sound played the microphone was hearing it.
-#[test]
-fn a_sound_the_library_played_is_not_reached_back_into() {
-    let ear = ear();
-    ear.set_no_speech_timeout(Duration::from_millis(500))
-        .unwrap();
-    ear.set_pre_roll(Duration::from_millis(500)).unwrap();
-    ear.register_sound(
-        "beep",
-        SoundSource::Pcm {
-            data: vec![9000; 1600],
-            sample_rate: 16_000,
-            channels: 1,
-            sample_type: SampleType::I16,
-        },
-        1.0,
-    )
-    .unwrap();
-
-    let told = Arc::new(Mutex::new(None::<(usize, Duration)>));
-    let sink = Arc::clone(&told);
-    ear.on_event(move |event| {
-        if let Event::SpeechEnded {
-            audio, duration, ..
-        } = event
-        {
-            let mut slot = sink.lock().unwrap_or_else(|e| e.into_inner());
-            if slot.is_none() {
-                *slot = Some((audio.len(), duration));
-            }
-        }
-    })
-    .unwrap();
-
-    ear.start().unwrap();
-    ear.enable_speech().unwrap();
-
-    // Build up history, then play into it.
-    thread::sleep(Duration::from_millis(700));
-    ear.play_sound("beep", false).unwrap();
-    let until = Instant::now() + Duration::from_secs(3);
-    while ear.is_playing() && Instant::now() < until {
-        thread::sleep(Duration::from_millis(5));
-    }
-    thread::sleep(Duration::from_millis(50));
-    ear.start_recording().unwrap();
-
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while told.lock().unwrap_or_else(|e| e.into_inner()).is_none() {
-        assert!(Instant::now() < deadline, "no recording ever came back");
-        thread::sleep(Duration::from_millis(2));
-    }
-    let (samples, counted) = told
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .expect("the loop only ends with an answer");
-    ear.destroy();
-
-    let extra = samples.saturating_sub((counted.as_secs_f64() * RATE) as usize);
-    let since_the_sound = (0.15 * RATE) as usize;
-    assert!(
-        extra < since_the_sound,
-        "{extra} samples of history came back, reaching over a sound \
-         that finished only moments before"
-    );
 }

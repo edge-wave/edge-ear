@@ -40,9 +40,6 @@ pub struct Detector<M: SpeechModel> {
     /// Trimmed to what the largest allowed pre-roll could ask for.
     history: Vec<i16>,
     history_limit: usize,
-    /// Samples at the front of the history that a recording must not
-    /// reach into, because the library's own playback is in them.
-    blocked: usize,
 }
 
 impl<M: SpeechModel> Detector<M> {
@@ -58,14 +55,7 @@ impl<M: SpeechModel> Detector<M> {
             open: false,
             history: Vec::new(),
             history_limit: 0,
-            blocked: 0,
         }
-    }
-
-    /// Everything heard so far is off limits to pre-roll, because the
-    /// microphone heard the sound the library just played.
-    pub fn block_history(&mut self) {
-        self.blocked = self.history.len();
     }
 
     /// The most history any recording may reach back into.
@@ -75,7 +65,6 @@ impl<M: SpeechModel> Detector<M> {
         if self.history.len() > keep {
             let gone = self.history.len() - keep;
             self.history.drain(..gone);
-            self.blocked = self.blocked.saturating_sub(gone);
         }
     }
 
@@ -91,8 +80,7 @@ impl<M: SpeechModel> Detector<M> {
         // The model carries state between calls. Left alone, what it
         // heard during the last recording would colour this one.
         self.model.reset();
-        let reachable = self.history.len() - self.blocked;
-        let wanted = self.samples_in(pre_roll).min(reachable);
+        let wanted = self.samples_in(pre_roll).min(self.history.len());
         self.audio = self.history[self.history.len() - wanted..].to_vec();
         self.counting = counting;
         self.speech_seen = false;
@@ -121,7 +109,6 @@ impl<M: SpeechModel> Detector<M> {
             if self.history.len() > self.history_limit {
                 let gone = self.history.len() - self.history_limit;
                 self.history.drain(..gone);
-                self.blocked = self.blocked.saturating_sub(gone);
             }
         }
         if !self.open {
@@ -410,7 +397,6 @@ struct Control {
     stop: bool,
     /// The alert sound has finished; start counting silence.
     start_counting: bool,
-    block_history: bool,
     limits: TunableConfig,
 }
 
@@ -483,11 +469,6 @@ impl SpeechThread {
         self.lock().start_counting = true;
     }
 
-    /// The library has just played something the microphone heard.
-    pub fn block_history(&self) {
-        self.lock().block_history = true;
-    }
-
     pub fn set_limits(&self, limits: TunableConfig) {
         self.lock().limits = limits;
     }
@@ -531,23 +512,17 @@ fn run(
             Err(_) => break,
         };
 
-        let (opening, should_stop, counting, block, limits) = {
+        let (opening, should_stop, counting, limits) = {
             let mut c = control.lock().unwrap_or_else(|e| e.into_inner());
             (
                 c.open.take(),
                 std::mem::take(&mut c.stop),
                 std::mem::take(&mut c.start_counting),
-                std::mem::take(&mut c.block_history),
                 c.limits.clone(),
             )
         };
 
         detector.set_history_limit(limits.pre_roll);
-        // Before any opening, so a recording asked for in the same
-        // breath cannot reach back over the sound.
-        if block {
-            detector.block_history();
-        }
         if let Some((pre_roll, counting_now)) = opening {
             detector.open(pre_roll, counting_now);
             open.store(true, Ordering::Relaxed);
