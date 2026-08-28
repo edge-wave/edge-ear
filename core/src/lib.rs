@@ -216,15 +216,15 @@ impl EdgeEar {
                                 match found {
                                     Ok(sound) => {
                                         player.play(sound, false);
-                                        speech.open_recording(Duration::ZERO, false);
+                                        speech.open_recording(limits.pre_roll, false);
                                     }
                                     // The alert was released since it
                                     // was named. Nothing to wait for.
-                                    Err(_) => speech.open_recording(Duration::ZERO, true),
+                                    Err(_) => speech.open_recording(limits.pre_roll, true),
                                 }
                             }
                             // Without one there is nothing to wait for.
-                            _ => speech.open_recording(Duration::ZERO, true),
+                            _ => speech.open_recording(limits.pre_roll, true),
                         }
                     }) as wake::OnWake
                 };
@@ -697,8 +697,10 @@ impl EdgeEar {
         })
     }
 
-    /// How much audio from before the recording opened to include,
-    /// so a word begun early is not cut off. Limited by the history.
+    /// How much audio from before the recording opened to include, so
+    /// a word begun early is not cut off. Limited by the history, and
+    /// used by a recording the wake word opened as much as by one the
+    /// application asked for.
     pub fn set_pre_roll(&self, value: std::time::Duration) -> Result<()> {
         self.tune_recording("the pre-roll", |c| c.tunable.pre_roll = value)
     }
