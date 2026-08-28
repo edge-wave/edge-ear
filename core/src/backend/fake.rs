@@ -186,6 +186,10 @@ impl InputStream for FakeInput {
 struct FakeOutput {
     format: AudioFormat,
     log: Arc<Mutex<PlaybackLog>>,
+    /// Set when the speaker should take as long as a real one, on the
+    /// same absolute schedule the microphone keeps.
+    paced: bool,
+    due: Option<std::time::Instant>,
 }
 
 impl OutputStream for FakeOutput {
@@ -194,6 +198,20 @@ impl OutputStream for FakeOutput {
     }
 
     fn write(&mut self, samples: &Samples) -> Result<()> {
+        if self.paced {
+            let frames = samples.len() / self.format.channels.max(1) as usize;
+            let span =
+                std::time::Duration::from_secs_f64(frames as f64 / self.format.sample_rate as f64);
+            let now = std::time::Instant::now();
+            let due = self.due.get_or_insert(now);
+            // Idle between sounds, or late. Either way a real speaker
+            // has run dry, so begin again rather than catching up.
+            if *due < now {
+                *due = now;
+            }
+            *due += span;
+            std::thread::sleep(*due - now);
+        }
         let mut log = self.log.lock().unwrap_or_else(|e| e.into_inner());
         match samples {
             Samples::I16(v) => log.written.extend_from_slice(v),
@@ -236,6 +254,8 @@ impl AudioBackend for FakeBackend {
             return Err(failure.to_error(Device::Output));
         }
         Ok(Box::new(FakeOutput {
+            paced: self.setup.paced,
+            due: None,
             format: req.preferred,
             log: Arc::clone(&self.playback),
         }))
