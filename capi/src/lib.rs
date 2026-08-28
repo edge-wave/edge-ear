@@ -524,20 +524,42 @@ pub unsafe extern "C" fn edge_ear_set_no_speech_timeout(ear: *mut edge_ear_h, se
 
 /// @brief How much audio from before the recording to include.
 ///
-/// So a word begun early is not cut off. Reaching back stops at any
-/// sound this library played, because the microphone heard it.
+/// So a word begun early is not cut off. Used by a recording the wake
+/// word opened as much as by one this application asked for.
 ///
 /// @param[in] ear the handle
 /// @param[in] seconds no more than the queue capacity
 /// @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
 ///         open, or another negative #edge_ear_error.
-/// @see edge_ear_set_ring_capacity
+/// @see edge_ear_set_ring_capacity,
+///      edge_ear_set_wake_recording_waits_for_alert
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_pre_roll(ear: *mut edge_ear_h, seconds: f64) -> i32 {
     with!(ear, e => {
         let span = ok_or_return!(duration(seconds, "the pre-roll"));
         report(e.core.set_pre_roll(span))
     })
+}
+
+/// @brief Whether a wake word recording begins again when the alert
+///        ends.
+///
+/// Off by default, so the recording collects from the moment the wake
+/// word lands and the microphone hears the alert into it. Turning it
+/// on leaves the alert behind, at the price of a speaker who talks
+/// over it, and puts the pre-roll out of reach on that path.
+///
+/// @param[in] ear the handle
+/// @param[in] waits non-zero to wait for the alert
+/// @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
+///         open, or another negative #edge_ear_error.
+/// @see edge_ear_enable_wake, edge_ear_set_pre_roll
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_wake_recording_waits_for_alert(
+    ear: *mut edge_ear_h,
+    waits: i32,
+) -> i32 {
+    with!(ear, e => report(e.core.set_wake_recording_waits_for_alert(waits != 0)))
 }
 
 // ---- sounds ------------------------------------------------------

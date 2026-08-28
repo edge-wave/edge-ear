@@ -674,16 +674,34 @@ int32_t edge_ear_set_no_speech_timeout(edge_ear_h *ear, double seconds);
 /**
  * @brief How much audio from before the recording to include.
  *
- * So a word begun early is not cut off. Reaching back stops at any
- * sound this library played, because the microphone heard it.
+ * So a word begun early is not cut off. Used by a recording the wake
+ * word opened as much as by one this application asked for.
  *
  * @param[in] ear the handle
  * @param[in] seconds no more than the queue capacity
  * @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
  *         open, or another negative #edge_ear_error.
- * @see edge_ear_set_ring_capacity
+ * @see edge_ear_set_ring_capacity,
+ *      edge_ear_set_wake_recording_waits_for_alert
  */
 int32_t edge_ear_set_pre_roll(edge_ear_h *ear, double seconds);
+
+/**
+ * @brief Whether a wake word recording begins again when the alert
+ *        ends.
+ *
+ * Off by default, so the recording collects from the moment the wake
+ * word lands and the microphone hears the alert into it. Turning it
+ * on leaves the alert behind, at the price of a speaker who talks
+ * over it, and puts the pre-roll out of reach on that path.
+ *
+ * @param[in] ear the handle
+ * @param[in] waits non-zero to wait for the alert
+ * @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
+ *         open, or another negative #edge_ear_error.
+ * @see edge_ear_enable_wake, edge_ear_set_pre_roll
+ */
+int32_t edge_ear_set_wake_recording_waits_for_alert(edge_ear_h *ear, int32_t waits);
 
 /**
  * @brief Register a sound read from a file.

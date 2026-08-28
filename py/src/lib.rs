@@ -624,6 +624,12 @@ impl EdgeEar {
             .map_err(to_py)
     }
 
+    fn set_wake_recording_waits_for_alert(&self, waits: bool) -> PyResult<()> {
+        self.core
+            .set_wake_recording_waits_for_alert(waits)
+            .map_err(to_py)
+    }
+
     fn set_ring_capacity(&self, seconds: f64) -> PyResult<()> {
         self.core
             .set_ring_capacity(Duration::from_secs_f64(seconds))
