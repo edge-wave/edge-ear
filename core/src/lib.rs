@@ -19,6 +19,7 @@ pub use capture::{AudioChunk, Samples};
 pub use player::registry::{SoundId, SoundSource};
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use std::time::Duration;
@@ -74,6 +75,11 @@ struct Inner {
     wake_word: Option<std::path::PathBuf>,
     /// Played when the wake word is heard, if the application named one.
     alert: Option<String>,
+    /// Read by the wake and playback threads, so a change reaches them
+    /// without waiting for the next start.
+    waits_for_alert: Arc<AtomicBool>,
+    /// Set while a wake word recording is waiting for its alert to end.
+    waiting_now: Arc<AtomicBool>,
 }
 
 impl Inner {
@@ -124,6 +130,8 @@ impl EdgeEar {
                 wake_models: None,
                 wake_word: None,
                 alert: None,
+                waits_for_alert: Arc::new(AtomicBool::new(false)),
+                waiting_now: Arc::new(AtomicBool::new(false)),
             }),
             dispatcher: Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY)),
             backend: Mutex::new(backend),
@@ -171,8 +179,16 @@ impl EdgeEar {
         if let Some(player) = inner.player.as_ref() {
             let speech = Arc::clone(&speech);
             let alert = inner.alert.clone();
+            let waiting_now = Arc::clone(&inner.waiting_now);
             player.on_finished(move |id| {
-                if alert.as_deref() == Some(id) {
+                if alert.as_deref() != Some(id) {
+                    return;
+                }
+                if waiting_now.swap(false, Ordering::Relaxed) {
+                    // Opening again leaves behind whatever the
+                    // microphone heard of the alert.
+                    speech.open_recording(Duration::ZERO, true);
+                } else {
                     speech.start_counting();
                 }
             });
@@ -199,6 +215,8 @@ impl EdgeEar {
                     let player = inner.player.clone();
                     let alert = inner.alert.clone();
                     let sounds = Arc::clone(&inner.sounds);
+                    let waits_for_alert = Arc::clone(&inner.waits_for_alert);
+                    let waiting_now = Arc::clone(&inner.waiting_now);
                     let limits = inner.config.tunable.clone();
                     Box::new(move || {
                         speech.set_limits(limits.clone());
@@ -215,7 +233,12 @@ impl EdgeEar {
                                 match found {
                                     Ok(sound) => {
                                         player.play(sound, false);
-                                        speech.open_recording(limits.pre_roll, false);
+                                        if waits_for_alert.load(Ordering::Relaxed) {
+                                            waiting_now.store(true, Ordering::Relaxed);
+                                            speech.open_recording(Duration::ZERO, false);
+                                        } else {
+                                            speech.open_recording(limits.pre_roll, false);
+                                        }
                                     }
                                     // The alert was released since it
                                     // was named. Nothing to wait for.
@@ -696,7 +719,37 @@ impl EdgeEar {
     /// used by a recording the wake word opened as much as by one the
     /// application asked for.
     pub fn set_pre_roll(&self, value: std::time::Duration) -> Result<()> {
+        if value > Duration::ZERO && self.lock().config.tunable.wake_recording_waits_for_alert {
+            log::warn!(
+                "a wake word recording waits for the alert, so this pre-roll \
+                 reaches only recordings the application opens itself"
+            );
+        }
         self.tune_recording("the pre-roll", |c| c.tunable.pre_roll = value)
+    }
+
+    /// Whether a recording the wake word opened begins again when the
+    /// alert ends, leaving behind what was heard while it played.
+    ///
+    /// Off by default: audio is collected from the moment the wake word
+    /// lands, so a speaker who talks over the alert is kept, at the
+    /// price of the alert itself being in the recording wherever the
+    /// microphone can hear the speaker. Turning it on makes the
+    /// pre-roll unreachable on that path, because all it could reach
+    /// back into is the alert. A recording `start_recording` opened is
+    /// not affected either way.
+    pub fn set_wake_recording_waits_for_alert(&self, value: bool) -> Result<()> {
+        if value && self.lock().config.tunable.pre_roll > Duration::ZERO {
+            log::warn!(
+                "the pre-roll is set, but a wake word recording now waits for \
+                 the alert, so nothing from before the alert reaches it"
+            );
+        }
+        self.tune_recording("waiting for the alert", |c| {
+            c.tunable.wake_recording_waits_for_alert = value
+        })?;
+        self.lock().waits_for_alert.store(value, Ordering::Relaxed);
+        Ok(())
     }
 
     /// True while a recording is collecting audio.
