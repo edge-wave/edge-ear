@@ -332,9 +332,11 @@ fn events_keep_arriving_in_order_behind_a_slow_handler() {
     )
     .unwrap();
 
+    // One owner of the speaker, so a sound started over the top of
+    // another replaces it and the first never finishes.
     for _ in 0..3 {
         ear.play_sound("beep", false).unwrap();
-        thread::sleep(Duration::from_millis(150));
+        assert!(wait_until(Duration::from_secs(5), || !ear.is_playing()));
     }
 
     assert!(
