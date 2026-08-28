@@ -172,7 +172,6 @@ impl EdgeEar {
             let speech = Arc::clone(&speech);
             let alert = inner.alert.clone();
             player.on_finished(move |id| {
-                speech.block_history();
                 if alert.as_deref() == Some(id) {
                     speech.start_counting();
                 }
@@ -495,11 +494,6 @@ impl EdgeEar {
         let inner = self.alive_mut()?;
         if let Some(player) = inner.player.as_ref() {
             player.stop_sound();
-        }
-        // Still heard by the microphone, and nothing reports the end
-        // of a sound that never reached it.
-        if let Some(speech) = inner.speech.as_ref() {
-            speech.block_history();
         }
         Ok(())
     }
