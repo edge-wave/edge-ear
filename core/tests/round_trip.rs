@@ -353,3 +353,60 @@ fn waiting_for_the_alert_puts_the_pre_roll_out_of_reach() {
         "the recording began again at the alert, so nothing should sit in front of it"
     );
 }
+
+/// An alert cut short still ends the wait behind it. Only the wake word
+/// opens a recording that waits, so the word has to be heard.
+#[test]
+#[ignore]
+fn cutting_the_alert_short_still_lets_the_recording_end() {
+    let (Some(dir), Some(word)) = (model_dir(), spoken_wake_word()) else {
+        println!("set EDGE_EAR_WAKE_DIR and EDGE_EAR_WAKE_WAV to run this");
+        return;
+    };
+    let ear = heard(word);
+    // Long enough that it is certainly still playing when it is cut.
+    ear.register_sound(
+        "beep",
+        SoundSource::Pcm {
+            data: vec![3000; 160_000],
+            sample_rate: 16_000,
+            channels: 1,
+            sample_type: SampleType::I16,
+        },
+        0.4,
+    )
+    .unwrap();
+    ear.load_wake_features(
+        &dir.join("melspectrogram.onnx"),
+        &dir.join("embedding_model.onnx"),
+    )
+    .unwrap();
+    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+        .unwrap();
+
+    let seen = watch(&ear);
+    ear.set_no_speech_timeout(Duration::from_millis(300))
+        .unwrap();
+    ear.set_max_recording(Duration::from_secs(20)).unwrap();
+    ear.enable_wake(Some("beep")).unwrap();
+    ear.enable_speech().unwrap();
+    ear.start().unwrap();
+
+    assert!(
+        wait_until(15, || !seen.lock().unwrap().order.is_empty()),
+        "the wake word was never heard"
+    );
+    thread::sleep(Duration::from_millis(200));
+    ear.stop_sound().unwrap();
+
+    assert!(
+        wait_until(10, || !seen.lock().unwrap().endings.is_empty()),
+        "the recording never ended after the alert was cut"
+    );
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen.endings[0].0,
+        EndReason::NoSpeech,
+        "it ran to the length cap instead of noticing the quiet"
+    );
+}
