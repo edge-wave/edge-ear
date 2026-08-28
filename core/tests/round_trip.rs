@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use edge_ear_core::backend::fake::FakeBackend;
-use edge_ear_core::config::SampleType;
+use edge_ear_core::backend::fake::{FakeBackend, FakeSetup};
+use edge_ear_core::config::{AudioFormat, SampleType};
 use edge_ear_core::error::Error;
 use edge_ear_core::events::{EndReason, Event};
 use edge_ear_core::{EdgeEar, SoundSource};
@@ -234,4 +234,122 @@ fn the_alert_finishing_is_what_starts_the_counting() {
     let seen = seen.lock().unwrap();
     assert_eq!(seen.endings[0].0, EndReason::NoSpeech);
     ear.stop().unwrap();
+}
+
+/// A wake word said out loud, so the wake path really runs. Set it to
+/// a wav of the phrase the model was trained on.
+fn spoken_wake_word() -> Option<Vec<i16>> {
+    let path = std::env::var("EDGE_EAR_WAKE_WAV").ok()?;
+    let bytes = std::fs::read(path).expect("the wake word wav");
+    let mut at = 12;
+    while at + 8 <= bytes.len() {
+        let size = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()) as usize;
+        if &bytes[at..at + 4] == b"data" {
+            let end = (at + 8 + size).min(bytes.len());
+            return Some(
+                bytes[at + 8..end]
+                    .chunks_exact(2)
+                    .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                    .collect(),
+            );
+        }
+        at += 8 + size + (size & 1);
+    }
+    panic!("no data chunk in the wake word wav")
+}
+
+/// Silence in front so there is history to reach back into, and behind
+/// so the recording has room to end on its own.
+fn heard(word: Vec<i16>) -> EdgeEar {
+    let mut audio = vec![0i16; 16_000];
+    audio.extend(word);
+    audio.extend(vec![0i16; 64_000]);
+    EdgeEar::with_backend(Box::new(FakeBackend::new(FakeSetup {
+        input_audio: audio,
+        input_format: Some(AudioFormat::mono_16k()),
+        block_samples: 160,
+        paced: true,
+        ..Default::default()
+    })))
+    .expect("handle")
+}
+
+/// Samples handed over beyond the ones the recording counted. That
+/// difference came from before the recording opened.
+fn wake_pre_roll(waits_for_alert: bool) -> Option<usize> {
+    let dir = model_dir()?;
+    let word = spoken_wake_word()?;
+    let ear = heard(word);
+    ear.register_sound("beep", alert(), 0.6).unwrap();
+    ear.load_wake_features(
+        &dir.join("melspectrogram.onnx"),
+        &dir.join("embedding_model.onnx"),
+    )
+    .unwrap();
+    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+        .unwrap();
+    ear.set_no_speech_timeout(Duration::from_millis(600))
+        .unwrap();
+    ear.set_pre_roll(Duration::from_millis(500)).unwrap();
+    ear.set_wake_recording_waits_for_alert(waits_for_alert)
+        .unwrap();
+
+    let told = Arc::new(Mutex::new(None::<(usize, Duration)>));
+    let sink = Arc::clone(&told);
+    ear.on_event(move |event| {
+        if let Event::SpeechEnded {
+            audio, duration, ..
+        } = event
+        {
+            let mut slot = sink.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.is_none() {
+                *slot = Some((audio.len(), duration));
+            }
+        }
+    })
+    .unwrap();
+    ear.enable_wake(Some("beep")).unwrap();
+    ear.enable_speech().unwrap();
+    ear.start().unwrap();
+
+    assert!(
+        wait_until(15, || told
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()),
+        "the wake word was never heard"
+    );
+    let (samples, counted) = told
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .expect("checked above");
+    ear.destroy();
+    Some(samples.saturating_sub((counted.as_secs_f64() * 16_000.0) as usize))
+}
+
+#[test]
+#[ignore]
+fn a_wake_word_recording_reaches_back_like_any_other() {
+    let Some(extra) = wake_pre_roll(false) else {
+        println!("set EDGE_EAR_WAKE_DIR and EDGE_EAR_WAKE_WAV to run this");
+        return;
+    };
+    let asked = (0.5 * 16_000.0) as usize;
+    assert!(
+        (asked..asked + 2048).contains(&extra),
+        "asked for {asked} samples of history and got {extra}"
+    );
+}
+
+#[test]
+#[ignore]
+fn waiting_for_the_alert_puts_the_pre_roll_out_of_reach() {
+    let Some(extra) = wake_pre_roll(true) else {
+        println!("set EDGE_EAR_WAKE_DIR and EDGE_EAR_WAKE_WAV to run this");
+        return;
+    };
+    assert_eq!(
+        extra, 0,
+        "the recording began again at the alert, so nothing should sit in front of it"
+    );
 }
