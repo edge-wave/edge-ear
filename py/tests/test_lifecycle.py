@@ -79,6 +79,12 @@ def test_audio_comes_back_as_a_numpy_array_when_numpy_is_there():
         assert len(array) == len(chunk)
 
 
+def test_waiting_for_the_alert_is_off_until_it_is_asked_for():
+    with edge_ear.EdgeEar() as ear:
+        ear.set_wake_recording_waits_for_alert(True)
+        ear.set_wake_recording_waits_for_alert(False)
+
+
 def test_settings_are_refused_while_a_recording_is_open():
     with edge_ear.EdgeEar() as ear:
         ear.set_no_speech_timeout(30.0)

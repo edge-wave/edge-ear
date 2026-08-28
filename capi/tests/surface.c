@@ -59,6 +59,10 @@ int main(void)
     CHECK(edge_ear_set_pre_roll(ear, 0.2) == EDGE_EAR_OK, "pre-roll");
     CHECK(edge_ear_set_speech_threshold(ear, 0.5f) == EDGE_EAR_OK, "speech threshold");
     CHECK(edge_ear_set_wake_settle_frames(ear, 24) == EDGE_EAR_OK, "settle frames");
+    CHECK(edge_ear_set_wake_recording_waits_for_alert(ear, 1) == EDGE_EAR_OK,
+          "waiting for the alert");
+    CHECK(edge_ear_set_wake_recording_waits_for_alert(ear, 0) == EDGE_EAR_OK,
+          "not waiting for the alert");
     CHECK(edge_ear_set_ring_capacity(ear, 2.0) == EDGE_EAR_OK, "ring capacity");
     CHECK(edge_ear_set_format(ear, EDGE_EAR_TARGET_READ, 16000, 1,
                               EDGE_EAR_SAMPLE_TYPE_I16) == EDGE_EAR_OK, "read format");
