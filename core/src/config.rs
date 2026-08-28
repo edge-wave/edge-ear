@@ -189,6 +189,7 @@ pub struct TunableConfig {
     pub no_speech_timeout: Duration,
     pub pre_roll: Duration,
     pub wake_settle_frames: u32,
+    pub wake_recording_waits_for_alert: bool,
 }
 
 impl Default for TunableConfig {
@@ -204,6 +205,7 @@ impl Default for TunableConfig {
             // application makes on purpose.
             pre_roll: Duration::ZERO,
             wake_settle_frames: 20,
+            wake_recording_waits_for_alert: false,
         }
     }
 }

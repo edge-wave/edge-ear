@@ -20,6 +20,7 @@ cpal-backend = ["dep:cpal"]
 
 [dependencies]
 cpal = { workspace = true, optional = true }
+log.workspace = true
 rubato.workspace = true
 symphonia.workspace = true
 thiserror.workspace = true

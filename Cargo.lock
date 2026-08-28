@@ -231,6 +231,7 @@ name = "edge-ear-core"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "log",
  "ort",
  "rubato",
  "symphonia",
