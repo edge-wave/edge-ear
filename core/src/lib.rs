@@ -181,15 +181,8 @@ impl EdgeEar {
             let alert = inner.alert.clone();
             let waiting_now = Arc::clone(&inner.waiting_now);
             player.on_finished(move |id| {
-                if alert.as_deref() != Some(id) {
-                    return;
-                }
-                if waiting_now.swap(false, Ordering::Relaxed) {
-                    // Opening again leaves behind whatever the
-                    // microphone heard of the alert.
-                    speech.open_recording(Duration::ZERO, true);
-                } else {
-                    speech.start_counting();
+                if alert.as_deref() == Some(id) {
+                    alert_ended(&speech, &waiting_now);
                 }
             });
         }
@@ -515,8 +508,14 @@ impl EdgeEar {
     /// sound did not end on its own.
     pub fn stop_sound(&self) -> Result<()> {
         let inner = self.alive_mut()?;
-        if let Some(player) = inner.player.as_ref() {
-            player.stop_sound();
+        let cut = inner.player.as_ref().and_then(|p| p.stop_sound());
+        // No completion event reports a sound that was cut, so the
+        // recording behind an alert would wait for one that never came.
+        if cut.is_some()
+            && cut == inner.alert
+            && let Some(speech) = inner.speech.as_ref()
+        {
+            alert_ended(speech, &inner.waiting_now);
         }
         Ok(())
     }
@@ -826,6 +825,18 @@ impl EdgeEar {
 impl Drop for EdgeEar {
     fn drop(&mut self) {
         self.destroy();
+    }
+}
+
+/// What the end of an alert means to the recording behind it, whether
+/// it played out or was cut short.
+fn alert_ended(speech: &SpeechThread, waiting: &AtomicBool) {
+    if waiting.swap(false, Ordering::Relaxed) {
+        // Opening again leaves behind whatever the microphone heard of
+        // the alert.
+        speech.open_recording(Duration::ZERO, true);
+    } else {
+        speech.start_counting();
     }
 }
 

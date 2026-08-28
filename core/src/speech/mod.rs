@@ -461,10 +461,8 @@ impl SpeechThread {
         self.open.load(Ordering::Relaxed)
     }
 
-    /// Told when an alert sound has finished, so the tail of the alert
-    /// is never counted as speech. Nothing plays an alert on wake yet;
-    /// the work that joins wake, playback, and recording will call this.
-    #[allow(dead_code, reason = "the alert gate is wired up with wake")]
+    /// Told when an alert sound has ended, so the tail of the alert is
+    /// never counted as speech.
     pub fn start_counting(&self) {
         self.lock().start_counting = true;
     }
