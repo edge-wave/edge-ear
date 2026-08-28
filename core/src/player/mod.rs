@@ -97,14 +97,15 @@ impl Player {
         self.wake.notify_all();
     }
 
-    /// Cut playback short. No completion event follows, because the
-    /// sound did not finish on its own.
-    pub fn stop_sound(&self) {
+    /// Cut playback short, naming what was cut. No completion event
+    /// follows, because the sound did not finish on its own.
+    pub fn stop_sound(&self) -> Option<String> {
         let mut state = self.lock();
-        state.current = None;
+        let cut = state.current.take().map(|p| p.sound.id.clone());
         state.stopped_by_application = true;
         drop(state);
         self.wake.notify_all();
+        cut
     }
 
     pub fn is_playing(&self) -> bool {
