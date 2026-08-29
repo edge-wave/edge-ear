@@ -12,6 +12,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use edge_ear_core::EdgeEar;
+use edge_ear_core::Samples;
 use edge_ear_core::SoundSource;
 use edge_ear_core::config::{AudioFormat, SampleType, Target};
 
@@ -590,16 +591,27 @@ pub unsafe extern "C" fn edge_ear_register_sound_file(
     })
 }
 
+/// How one sample is written, as the C side names it.
+fn sample_type_of(kind: edge_ear_sample_type) -> SampleType {
+    match kind {
+        edge_ear_sample_type::EDGE_EAR_SAMPLE_TYPE_I16 => SampleType::I16,
+        edge_ear_sample_type::EDGE_EAR_SAMPLE_TYPE_F32 => SampleType::F32,
+    }
+}
+
 /// @brief Register a sound from raw audio the caller already holds.
 ///
-/// The samples are copied, so they may be freed once this returns.
+/// Raw audio carries no header, so `sample_rate`, `channels` and
+/// `sample_type` say what `data` holds. The samples are copied, so they
+/// may be freed once this returns.
 ///
 /// @param[in] ear the handle
 /// @param[in] id the name to play it by later
-/// @param[in] data 16-bit samples
-/// @param[in] len how many samples `data` holds
+/// @param[in] data samples in the type named below
+/// @param[in] len how many samples `data` holds, not bytes
 /// @param[in] sample_rate the rate those samples were taken at
 /// @param[in] channels 1 or 2
+/// @param[in] sample_type how one sample is written
 /// @param[in] volume from 0.0 to 1.0
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_play_sound, edge_ear_unregister_sound
@@ -607,10 +619,11 @@ pub unsafe extern "C" fn edge_ear_register_sound_file(
 pub unsafe extern "C" fn edge_ear_register_sound_pcm(
     ear: *mut edge_ear_h,
     id: *const c_char,
-    data: *const i16,
+    data: *const c_void,
     len: usize,
     sample_rate: u32,
     channels: u16,
+    sample_type: edge_ear_sample_type,
     volume: f32,
 ) -> i32 {
     with!(ear, e => {
@@ -618,13 +631,20 @@ pub unsafe extern "C" fn edge_ear_register_sound_pcm(
         if data.is_null() {
             return fail_with(EDGE_EAR_NULL_ARGUMENT, "the audio must not be null");
         }
-        // Safe: the caller promised `len` samples at `data` for this call.
-        let samples = unsafe { std::slice::from_raw_parts(data, len) }.to_vec();
+        let kind = sample_type_of(sample_type);
+        // Safe: the caller promised `len` samples of `kind` at `data`.
+        let samples = match kind {
+            SampleType::I16 => {
+                Samples::I16(unsafe { std::slice::from_raw_parts(data.cast::<i16>(), len) }.to_vec())
+            }
+            SampleType::F32 => {
+                Samples::F32(unsafe { std::slice::from_raw_parts(data.cast::<f32>(), len) }.to_vec())
+            }
+        };
         let source = SoundSource::Pcm {
             data: samples,
             sample_rate,
             channels,
-            sample_type: SampleType::I16,
         };
         report(e.core.register_sound(id, source, volume))
     })
@@ -873,11 +893,7 @@ pub unsafe extern "C" fn edge_ear_set_format(
             edge_ear_target::EDGE_EAR_TARGET_SPEECH => Target::Speech,
             edge_ear_target::EDGE_EAR_TARGET_READ => Target::Read,
         };
-        let sample_type = match sample_type {
-            edge_ear_sample_type::EDGE_EAR_SAMPLE_TYPE_I16 => SampleType::I16,
-            edge_ear_sample_type::EDGE_EAR_SAMPLE_TYPE_F32 => SampleType::F32,
-        };
-        let format = AudioFormat::new(sample_rate, channels, sample_type);
+        let format = AudioFormat::new(sample_rate, channels, sample_type_of(sample_type));
         report(e.core.set_format(target, format))
     })
 }
