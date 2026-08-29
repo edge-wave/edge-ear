@@ -243,3 +243,30 @@ fn nothing_hangs_when_called_in_the_wrong_order() {
         started.elapsed()
     );
 }
+
+/// The speaker opens on the first sound and stays open, so what it is
+/// opened at is fixed from then rather than from the start of capture.
+#[test]
+fn the_settings_fixed_at_the_speaker_refuse_once_it_is_open() {
+    let ear = ear();
+    ear.start().unwrap();
+    // Capture running is not the speaker being open.
+    ear.set_output_device(None)
+        .expect("the speaker has not been opened yet");
+
+    ear.register_sound("x", tone(), 1.0).unwrap();
+
+    for (what, result) in [
+        ("set_output_device", ear.set_output_device(None)),
+        (
+            "set_output_device_format",
+            ear.set_output_device_format(Some(AudioFormat::mono_16k())),
+        ),
+    ] {
+        let err = result.expect_err(&format!("{what} should be fixed once the speaker is open"));
+        assert!(
+            matches!(err, Error::RunningNotAllowed { .. }),
+            "{what} gave {err} instead of saying it is fixed"
+        );
+    }
+}
