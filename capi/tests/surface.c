@@ -75,6 +75,20 @@ int main(void)
     CHECK(edge_ear_output_devices(ear, &devices, &count) == EDGE_EAR_OK, "output devices");
     /* A name is taken as given and checked when capture starts, which
      * is what the Rust side does and what its tests pin down. */
+    const edge_ear_format *formats;
+    size_t formats_count = 0;
+    CHECK(edge_ear_input_device_formats(ear, NULL, &formats, &formats_count)
+              == EDGE_EAR_OK, "input formats");
+    CHECK(formats_count > 0, "the default microphone offered something");
+    CHECK(formats[0].channels > 0, "a format names its channels");
+    CHECK(formats[0].min_sample_rate <= formats[0].max_sample_rate,
+          "a format's span runs the right way");
+    CHECK(edge_ear_output_device_formats(ear, NULL, &formats, &formats_count)
+              == EDGE_EAR_OK, "output formats");
+    CHECK(formats_count > 0, "the default speaker offered something");
+    CHECK(edge_ear_input_device_formats(ear, NULL, NULL, &formats_count)
+              == EDGE_EAR_NULL_ARGUMENT, "null formats out");
+
     CHECK(edge_ear_set_input_device(ear, "nothing::here") == EDGE_EAR_OK,
           "an unknown name is accepted");
     CHECK(edge_ear_start(ear) == EDGE_EAR_NO_DEVICE, "and refused at start");
