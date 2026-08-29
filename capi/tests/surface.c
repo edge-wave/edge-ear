@@ -82,9 +82,11 @@ int main(void)
 
     int16_t tone[1600];
     for (size_t i = 0; i < 1600; i++) tone[i] = (int16_t)((i % 200) * 30);
-    CHECK(edge_ear_register_sound_pcm(ear, "beep", tone, 1600, 16000, 1, 0.5f)
+    CHECK(edge_ear_register_sound_pcm(ear, "beep", tone, 1600, 16000, 1,
+                                      EDGE_EAR_SAMPLE_TYPE_I16, 0.5f)
               == EDGE_EAR_OK, "register pcm");
-    CHECK(edge_ear_register_sound_pcm(ear, "bad", NULL, 10, 16000, 1, 1.0f)
+    CHECK(edge_ear_register_sound_pcm(ear, "bad", NULL, 10, 16000, 1,
+                                      EDGE_EAR_SAMPLE_TYPE_I16, 1.0f)
               == EDGE_EAR_NULL_ARGUMENT, "null pcm");
     CHECK(edge_ear_play_sound(ear, "missing", 0) == EDGE_EAR_UNKNOWN_SOUND,
           "unknown sound");

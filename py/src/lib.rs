@@ -13,7 +13,7 @@ use pyo3::types::{PyBytes, PyDict};
 use edge_ear_core::config::{AudioFormat, SampleType, Target};
 use edge_ear_core::error::Error;
 use edge_ear_core::events::{EndReason, Event};
-use edge_ear_core::{EdgeEar as Core, SoundSource};
+use edge_ear_core::{EdgeEar as Core, Samples, SoundSource};
 
 // One exception per way a call can fail, so an application can catch a
 // refused microphone separately from a missing one.
@@ -498,7 +498,7 @@ impl EdgeEar {
         &self,
         id: &str,
         path: Option<PathBuf>,
-        pcm: Option<Vec<i16>>,
+        pcm: Option<Bound<'_, PyAny>>,
         sample_rate: u32,
         channels: u16,
         sample_type: &str,
@@ -507,10 +507,14 @@ impl EdgeEar {
         let source = match (path, pcm) {
             (Some(path), None) => SoundSource::File { path },
             (None, Some(data)) => SoundSource::Pcm {
-                data,
+                // Raw audio carries no header, so the caller says what
+                // the samples are and they are read that way.
+                data: match sample_type_of(sample_type)? {
+                    SampleType::I16 => Samples::I16(data.extract()?),
+                    SampleType::F32 => Samples::F32(data.extract()?),
+                },
                 sample_rate,
                 channels,
-                sample_type: sample_type_of(sample_type)?,
             },
             (Some(_), Some(_)) => {
                 return Err(InvalidValue::new_err("give either path or pcm, not both"));

@@ -107,6 +107,31 @@ typedef int32_t edge_ear_end_reason;
 #endif // __cplusplus
 
 /**
+ * How one sample of audio is written.
+ */
+enum edge_ear_sample_type
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : int32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * Signed 16-bit. What `edge_ear_read` requires.
+     */
+    EDGE_EAR_SAMPLE_TYPE_I16 = 1,
+    /**
+     * 32-bit float between -1 and 1.
+     */
+    EDGE_EAR_SAMPLE_TYPE_F32,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum edge_ear_sample_type edge_ear_sample_type;
+#else
+typedef int32_t edge_ear_sample_type;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * Which of the three readers of live audio a setting is about.
  */
 enum edge_ear_target
@@ -133,31 +158,6 @@ enum edge_ear_target
 typedef enum edge_ear_target edge_ear_target;
 #else
 typedef int32_t edge_ear_target;
-#endif // __STDC_VERSION__ >= 202311L
-#endif // __cplusplus
-
-/**
- * How one sample of audio is written.
- */
-enum edge_ear_sample_type
-#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
-  : int32_t
-#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
- {
-    /**
-     * Signed 16-bit. What `edge_ear_read` requires.
-     */
-    EDGE_EAR_SAMPLE_TYPE_I16 = 1,
-    /**
-     * 32-bit float between -1 and 1.
-     */
-    EDGE_EAR_SAMPLE_TYPE_F32,
-};
-#ifndef __cplusplus
-#if __STDC_VERSION__ >= 202311L
-typedef enum edge_ear_sample_type edge_ear_sample_type;
-#else
-typedef int32_t edge_ear_sample_type;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -724,24 +724,28 @@ int32_t edge_ear_register_sound_file(edge_ear_h *ear,
 /**
  * @brief Register a sound from raw audio the caller already holds.
  *
- * The samples are copied, so they may be freed once this returns.
+ * Raw audio carries no header, so `sample_rate`, `channels` and
+ * `sample_type` say what `data` holds. The samples are copied, so they
+ * may be freed once this returns.
  *
  * @param[in] ear the handle
  * @param[in] id the name to play it by later
- * @param[in] data 16-bit samples
- * @param[in] len how many samples `data` holds
+ * @param[in] data samples in the type named below
+ * @param[in] len how many samples `data` holds, not bytes
  * @param[in] sample_rate the rate those samples were taken at
  * @param[in] channels 1 or 2
+ * @param[in] sample_type how one sample is written
  * @param[in] volume from 0.0 to 1.0
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_play_sound, edge_ear_unregister_sound
  */
 int32_t edge_ear_register_sound_pcm(edge_ear_h *ear,
                                     const char *id,
-                                    const int16_t *data,
+                                    const void *data,
                                     uintptr_t len,
                                     uint32_t sample_rate,
                                     uint16_t channels,
+                                    edge_ear_sample_type sample_type,
                                     float volume);
 
 /**
