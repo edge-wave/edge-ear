@@ -35,6 +35,7 @@ struct Borrowed {
     alert: Option<CString>,
     devices: Vec<CString>,
     listed: Vec<edge_ear_device>,
+    formats: Vec<edge_ear_format>,
 }
 
 impl edge_ear_h {
@@ -724,6 +725,58 @@ pub struct edge_ear_device {
     pub is_default: i32,
 }
 
+/// One shape of audio a device says it will take.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct edge_ear_format {
+    /// How many channels at this setting.
+    pub channels: u16,
+    /// The lowest rate it will take here.
+    pub min_sample_rate: u32,
+    /// The highest rate it will take here. Equal to the lowest when a
+    /// device offers one rate rather than a span.
+    pub max_sample_rate: u32,
+    /// What this library hands over, or takes, at this setting.
+    pub sample_type: edge_ear_sample_type,
+}
+
+fn list_formats(
+    ear: &edge_ear_h,
+    found: edge_ear_core::error::Result<Vec<edge_ear_core::backend::SupportedFormat>>,
+    formats: *mut *const edge_ear_format,
+    count: *mut usize,
+) -> i32 {
+    let formats = match out_ptr(formats, "formats") {
+        Ok(slot) => slot,
+        Err(code) => return code,
+    };
+    let count = match out_ptr(count, "count") {
+        Ok(slot) => slot,
+        Err(code) => return code,
+    };
+    let found = match found {
+        Ok(found) => found,
+        Err(e) => return fail(&e),
+    };
+
+    let mut held = ear.borrowed.lock().unwrap_or_else(|e| e.into_inner());
+    held.formats = found
+        .iter()
+        .map(|f| edge_ear_format {
+            channels: f.channels,
+            min_sample_rate: f.min_sample_rate,
+            max_sample_rate: f.max_sample_rate,
+            sample_type: match f.sample_type {
+                SampleType::I16 => edge_ear_sample_type::EDGE_EAR_SAMPLE_TYPE_I16,
+                SampleType::F32 => edge_ear_sample_type::EDGE_EAR_SAMPLE_TYPE_F32,
+            },
+        })
+        .collect();
+    *formats = held.formats.as_ptr();
+    *count = held.formats.len();
+    OK
+}
+
 fn list_devices(
     ear: &edge_ear_h,
     found: edge_ear_core::error::Result<Vec<edge_ear_core::backend::DeviceInfo>>,
@@ -767,6 +820,59 @@ fn list_devices(
     *devices = held.listed.as_ptr();
     *count = held.listed.len();
     OK
+}
+
+/// @brief What one microphone will take.
+///
+/// Rates come as a span, because that is how a device describes
+/// itself. A device offering single rates reports each one with the
+/// same low and high.
+///
+/// @param[in] ear the handle
+/// @param[in] device the identifier, or NULL for the default one
+/// @param[out] formats where the list goes, borrowed until the next
+///             listing call on this handle
+/// @param[out] count how many entries the list holds
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_input_devices, edge_ear_set_format
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_input_device_formats(
+    ear: *mut edge_ear_h,
+    device: *const c_char,
+    formats: *mut *const edge_ear_format,
+    count: *mut usize,
+) -> i32 {
+    with!(ear, e => {
+        let name = ok_or_return!(optional_str(device, "the device"));
+        let found = e.core.input_device_formats(name);
+        list_formats(e, found, formats, count)
+    })
+}
+
+/// @brief What one speaker will take.
+///
+/// Sounds are converted to whichever of these the speaker is opened
+/// at, so this says what to expect of them.
+///
+/// @param[in] ear the handle
+/// @param[in] device the identifier, or NULL for the default one
+/// @param[out] formats where the list goes, borrowed until the next
+///             listing call on this handle
+/// @param[out] count how many entries the list holds
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_output_devices, edge_ear_register_sound_pcm
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_output_device_formats(
+    ear: *mut edge_ear_h,
+    device: *const c_char,
+    formats: *mut *const edge_ear_format,
+    count: *mut usize,
+) -> i32 {
+    with!(ear, e => {
+        let name = ok_or_return!(optional_str(device, "the device"));
+        let found = e.core.output_device_formats(name);
+        list_formats(e, found, formats, count)
+    })
 }
 
 /// @brief Every microphone the system offers.
