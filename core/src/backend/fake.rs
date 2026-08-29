@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream};
+use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
 use crate::capture::Samples;
 use crate::config::{AudioFormat, Device};
 use crate::error::{Error, Result};
@@ -11,6 +11,10 @@ use crate::error::{Error, Result};
 /// What the fake microphone will produce, and how it should fail.
 #[derive(Debug, Clone, Default)]
 pub struct FakeSetup {
+    /// What the fake devices say they will take. Empty means "only
+    /// the format they are set to", which is what a plain device does.
+    pub input_formats: Vec<SupportedFormat>,
+    pub output_formats: Vec<SupportedFormat>,
     /// Audio handed out one block at a time. When it runs out the
     /// stream reports silence forever.
     pub input_audio: Vec<i16>,
@@ -261,6 +265,20 @@ impl AudioBackend for FakeBackend {
         }))
     }
 
+    fn input_formats(&self, _device: Option<&str>) -> Result<Vec<SupportedFormat>> {
+        Ok(offered(
+            &self.setup.input_formats,
+            self.setup.input_format.unwrap_or(AudioFormat::mono_16k()),
+        ))
+    }
+
+    fn output_formats(&self, _device: Option<&str>) -> Result<Vec<SupportedFormat>> {
+        Ok(offered(
+            &self.setup.output_formats,
+            self.setup.input_format.unwrap_or(AudioFormat::mono_16k()),
+        ))
+    }
+
     fn input_devices(&self) -> Result<Vec<DeviceInfo>> {
         Ok(self.setup.input_devices.clone())
     }
@@ -274,9 +292,65 @@ impl AudioBackend for FakeBackend {
     }
 }
 
+/// What was set, or the one format the device is fixed at.
+fn offered(set: &[SupportedFormat], fallback: AudioFormat) -> Vec<SupportedFormat> {
+    if !set.is_empty() {
+        return set.to_vec();
+    }
+    vec![SupportedFormat {
+        channels: fallback.channels,
+        min_sample_rate: fallback.sample_rate,
+        max_sample_rate: fallback.sample_rate,
+        sample_type: fallback.sample_type,
+    }]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::SampleType;
+
+    #[test]
+    fn a_device_offers_what_it_was_set_to() {
+        let backend = FakeBackend::silent();
+        let offered = backend.input_formats(None).expect("formats");
+        assert_eq!(
+            offered,
+            vec![SupportedFormat {
+                channels: 1,
+                min_sample_rate: 16_000,
+                max_sample_rate: 16_000,
+                sample_type: SampleType::I16,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_fussy_device_offers_exactly_what_it_was_given() {
+        let wanted = vec![SupportedFormat {
+            channels: 2,
+            min_sample_rate: 44_100,
+            max_sample_rate: 48_000,
+            sample_type: SampleType::F32,
+        }];
+        let mut backend = FakeBackend::silent();
+        backend.setup.output_formats = wanted.clone();
+        assert_eq!(backend.output_formats(None).expect("formats"), wanted);
+    }
+
+    #[test]
+    fn a_range_says_what_falls_inside_it() {
+        let range = SupportedFormat {
+            channels: 1,
+            min_sample_rate: 16_000,
+            max_sample_rate: 48_000,
+            sample_type: SampleType::I16,
+        };
+        assert!(range.covers(&AudioFormat::mono_16k()));
+        assert!(!range.covers(&AudioFormat::new(8_000, 1, SampleType::I16)));
+        assert!(!range.covers(&AudioFormat::new(16_000, 2, SampleType::I16)));
+        assert!(!range.covers(&AudioFormat::new(16_000, 1, SampleType::F32)));
+    }
 
     fn request() -> FormatRequest {
         FormatRequest {

@@ -6,7 +6,7 @@ pub mod cpal_backend;
 pub mod fake;
 
 use crate::capture::Samples;
-use crate::config::{AudioFormat, Device};
+use crate::config::{AudioFormat, Device, SampleType};
 use crate::error::Result;
 
 /// What a device says it is.
@@ -19,6 +19,27 @@ pub struct DeviceInfo {
     /// For showing to a person. May repeat across devices.
     pub name: String,
     pub is_default: bool,
+}
+
+/// One shape of audio a device says it will take. A range rather than
+/// a single rate, because that is how a device describes itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SupportedFormat {
+    pub channels: u16,
+    pub min_sample_rate: u32,
+    pub max_sample_rate: u32,
+    /// What this library would hand over, or take, at that setting.
+    pub sample_type: SampleType,
+}
+
+impl SupportedFormat {
+    /// Whether a format falls inside this, so a request can be checked
+    /// before a device is asked to honour it.
+    pub fn covers(&self, format: &AudioFormat) -> bool {
+        self.channels == format.channels
+            && self.sample_type == format.sample_type
+            && (self.min_sample_rate..=self.max_sample_rate).contains(&format.sample_rate)
+    }
 }
 
 /// What the caller wants from a stream. The backend answers with what
@@ -59,6 +80,9 @@ pub trait AudioBackend: Send {
     fn open_output(&mut self, req: &FormatRequest) -> Result<Box<dyn OutputStream>>;
     fn input_devices(&self) -> Result<Vec<DeviceInfo>>;
     fn output_devices(&self) -> Result<Vec<DeviceInfo>>;
+    /// What one device will take. `None` asks about the default.
+    fn input_formats(&self, device: Option<&str>) -> Result<Vec<SupportedFormat>>;
+    fn output_formats(&self, device: Option<&str>) -> Result<Vec<SupportedFormat>>;
 
     /// Name for error messages and logs.
     fn describe(&self) -> &'static str;
