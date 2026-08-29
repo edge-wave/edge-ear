@@ -82,6 +82,34 @@ impl Device {
     }
 }
 
+/// One shape of audio a device says it will take.
+#[pyclass(frozen, get_all, skip_from_py_object)]
+#[derive(Clone)]
+pub struct SupportedFormat {
+    pub channels: u16,
+    /// The lowest rate at this setting, and the highest. Equal when a
+    /// device offers one rate rather than a span.
+    pub min_sample_rate: u32,
+    pub max_sample_rate: u32,
+    /// "i16" or "f32".
+    pub sample_type: String,
+}
+
+#[pymethods]
+impl SupportedFormat {
+    fn __repr__(&self) -> String {
+        let rate = if self.min_sample_rate == self.max_sample_rate {
+            format!("{} Hz", self.min_sample_rate)
+        } else {
+            format!("{}-{} Hz", self.min_sample_rate, self.max_sample_rate)
+        };
+        format!(
+            "SupportedFormat({}ch, {rate}, {})",
+            self.channels, self.sample_type
+        )
+    }
+}
+
 /// A block of live audio.
 #[pyclass(frozen)]
 pub struct AudioChunk {
@@ -560,6 +588,16 @@ impl EdgeEar {
             .collect())
     }
 
+    #[pyo3(signature = (device = None))]
+    fn input_device_formats(&self, device: Option<&str>) -> PyResult<Vec<SupportedFormat>> {
+        formats_of(self.core.input_device_formats(device))
+    }
+
+    #[pyo3(signature = (device = None))]
+    fn output_device_formats(&self, device: Option<&str>) -> PyResult<Vec<SupportedFormat>> {
+        formats_of(self.core.output_device_formats(device))
+    }
+
     fn output_devices(&self) -> PyResult<Vec<Device>> {
         Ok(self
             .core
@@ -645,6 +683,24 @@ impl EdgeEar {
     }
 }
 
+fn formats_of(
+    found: Result<Vec<edge_ear_core::backend::SupportedFormat>, Error>,
+) -> PyResult<Vec<SupportedFormat>> {
+    Ok(found
+        .map_err(to_py)?
+        .into_iter()
+        .map(|f| SupportedFormat {
+            channels: f.channels,
+            min_sample_rate: f.min_sample_rate,
+            max_sample_rate: f.max_sample_rate,
+            sample_type: match f.sample_type {
+                SampleType::I16 => "i16".to_string(),
+                SampleType::F32 => "f32".to_string(),
+            },
+        })
+        .collect())
+}
+
 fn sample_type_of(name: &str) -> PyResult<SampleType> {
     sample_type(name)
 }
@@ -658,6 +714,7 @@ fn edge_ear(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<EdgeEar>()?;
     m.add_class::<AudioChunk>()?;
     m.add_class::<Device>()?;
+    m.add_class::<SupportedFormat>()?;
     m.add_class::<AudioEvent>()?;
     m.add_class::<WakeDetected>()?;
     m.add_class::<SpeechEnded>()?;

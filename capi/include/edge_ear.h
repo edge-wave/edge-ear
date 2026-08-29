@@ -332,6 +332,29 @@ typedef struct {
 typedef void (*edge_ear_event_cb)(const edge_ear_event *event, void *user);
 
 /**
+ * One shape of audio a device says it will take.
+ */
+typedef struct {
+    /**
+     * How many channels at this setting.
+     */
+    uint16_t channels;
+    /**
+     * The lowest rate it will take here.
+     */
+    uint32_t min_sample_rate;
+    /**
+     * The highest rate it will take here. Equal to the lowest when a
+     * device offers one rate rather than a span.
+     */
+    uint32_t max_sample_rate;
+    /**
+     * What this library hands over, or takes, at this setting.
+     */
+    edge_ear_sample_type sample_type;
+} edge_ear_format;
+
+/**
  * One device. Both strings are borrowed until the next listing call
  * on the same handle.
  */
@@ -791,6 +814,45 @@ int32_t edge_ear_stop_sound(edge_ear_h *ear);
  *         null handle.
  */
 int32_t edge_ear_is_playing(edge_ear_h *ear);
+
+/**
+ * @brief What one microphone will take.
+ *
+ * Rates come as a span, because that is how a device describes
+ * itself. A device offering single rates reports each one with the
+ * same low and high.
+ *
+ * @param[in] ear the handle
+ * @param[in] device the identifier, or NULL for the default one
+ * @param[out] formats where the list goes, borrowed until the next
+ *             listing call on this handle
+ * @param[out] count how many entries the list holds
+ * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+ * @see edge_ear_input_devices, edge_ear_set_format
+ */
+int32_t edge_ear_input_device_formats(edge_ear_h *ear,
+                                      const char *device,
+                                      const edge_ear_format **formats,
+                                      uintptr_t *count);
+
+/**
+ * @brief What one speaker will take.
+ *
+ * Sounds are converted to whichever of these the speaker is opened
+ * at, so this says what to expect of them.
+ *
+ * @param[in] ear the handle
+ * @param[in] device the identifier, or NULL for the default one
+ * @param[out] formats where the list goes, borrowed until the next
+ *             listing call on this handle
+ * @param[out] count how many entries the list holds
+ * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+ * @see edge_ear_output_devices, edge_ear_register_sound_pcm
+ */
+int32_t edge_ear_output_device_formats(edge_ear_h *ear,
+                                       const char *device,
+                                       const edge_ear_format **formats,
+                                       uintptr_t *count);
 
 /**
  * @brief Every microphone the system offers.
