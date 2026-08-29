@@ -410,3 +410,83 @@ fn cutting_the_alert_short_still_lets_the_recording_end() {
         "it ran to the length cap instead of noticing the quiet"
     );
 }
+
+/// A setting changed while capture runs must reach whichever path
+/// opens the next recording. Both are asked the same question.
+fn timeout_a_recording_followed(by_wake: bool) -> Option<Duration> {
+    let dir = model_dir()?;
+    let word = spoken_wake_word()?;
+    let ear = heard(word);
+    ear.load_wake_features(
+        &dir.join("melspectrogram.onnx"),
+        &dir.join("embedding_model.onnx"),
+    )
+    .unwrap();
+    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+        .unwrap();
+    // What start would have carried off, had it carried anything.
+    ear.set_no_speech_timeout(Duration::from_secs(5)).unwrap();
+
+    let told = Arc::new(Mutex::new(None::<Duration>));
+    let sink = Arc::clone(&told);
+    ear.on_event(move |event| {
+        if let Event::SpeechEnded { duration, .. } = event {
+            let mut slot = sink.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.is_none() {
+                *slot = Some(duration);
+            }
+        }
+    })
+    .unwrap();
+    if by_wake {
+        ear.enable_wake(None).unwrap();
+    }
+    ear.enable_speech().unwrap();
+    ear.start().unwrap();
+
+    ear.set_no_speech_timeout(Duration::from_millis(400))
+        .unwrap();
+    if !by_wake {
+        ear.start_recording().unwrap();
+    }
+
+    assert!(
+        wait_until(20, || told
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()),
+        "no recording ever came back"
+    );
+    let counted = told
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .expect("checked above");
+    ear.destroy();
+    Some(counted)
+}
+
+#[test]
+#[ignore]
+fn a_wake_word_recording_follows_a_timeout_changed_while_running() {
+    let Some(counted) = timeout_a_recording_followed(true) else {
+        println!("set EDGE_EAR_WAKE_DIR and EDGE_EAR_WAKE_WAV to run this");
+        return;
+    };
+    assert!(
+        counted < Duration::from_secs(1),
+        "counted {counted:?}, so it followed the timeout in place at start"
+    );
+}
+
+#[test]
+#[ignore]
+fn a_recording_opened_by_hand_follows_it_too() {
+    let Some(counted) = timeout_a_recording_followed(false) else {
+        println!("set EDGE_EAR_WAKE_DIR and EDGE_EAR_WAKE_WAV to run this");
+        return;
+    };
+    assert!(
+        counted < Duration::from_secs(1),
+        "counted {counted:?}, so it followed the timeout in place at start"
+    );
+}
