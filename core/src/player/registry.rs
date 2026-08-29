@@ -295,6 +295,76 @@ mod tests {
         assert!(!sound.samples.is_empty());
     }
 
+    /// Raw audio has no header, so the caller says what it holds. The
+    /// same tone written two ways must land in the same place.
+    #[test]
+    fn floats_and_integers_saying_the_same_thing_agree() {
+        let floats: Vec<f32> = (0..1600).map(|n| (n as f32 * 0.1).sin() * 0.25).collect();
+        let ints: Vec<i16> = floats.iter().map(|s| (s * 32767.0) as i16).collect();
+
+        let mut registry = Registry::new();
+        for (id, data) in [("f", Samples::F32(floats)), ("i", Samples::I16(ints))] {
+            registry
+                .register(
+                    id.into(),
+                    SoundSource::Pcm {
+                        data,
+                        sample_rate: 16_000,
+                        channels: 1,
+                    },
+                    1.0,
+                    output(),
+                )
+                .unwrap();
+        }
+
+        let from_floats = &registry.get("f").unwrap().samples;
+        let from_ints = &registry.get("i").unwrap().samples;
+        assert_eq!(from_floats.len(), from_ints.len());
+        let worst = from_floats
+            .iter()
+            .zip(from_ints.iter())
+            .map(|(a, b)| (*a as i32 - *b as i32).abs())
+            .max()
+            .unwrap();
+        assert!(worst <= 1, "the two spellings differ by {worst}");
+    }
+
+    /// Floats at another rate go through the resampler as floats, not
+    /// as whatever they would have been mistaken for.
+    #[test]
+    fn floats_at_another_rate_reach_the_output_rate() {
+        let mut registry = Registry::new();
+        registry
+            .register(
+                "reply".into(),
+                SoundSource::Pcm {
+                    data: Samples::F32(vec![0.25; 24_000]),
+                    sample_rate: 24_000,
+                    channels: 1,
+                },
+                1.0,
+                output(),
+            )
+            .unwrap();
+
+        let sound = registry.get("reply").unwrap();
+        assert_eq!(sound.format.sample_rate, 16_000);
+        // A second at 24 kHz is a second at 16 kHz, plus the padding a
+        // sound carries at each end.
+        let pad = 2 * (envelope::PAD_MS as usize * 16);
+        let counted = sound.samples.len() - pad;
+        assert!(
+            (15_000..=17_000).contains(&counted),
+            "a second of audio came back as {counted} samples"
+        );
+        let loudest = sound.samples.iter().map(|s| s.abs()).max().unwrap();
+        assert!(
+            loudest > 7_000,
+            "the floats came back far too quiet: {loudest}"
+        );
+    }
+
     #[test]
     fn an_unknown_id_says_so() {
         let registry = Registry::new();
