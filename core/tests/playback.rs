@@ -17,6 +17,12 @@ fn ear() -> EdgeEar {
     EdgeEar::with_backend(Box::new(FakeBackend::silent())).expect("handle")
 }
 
+/// A speaker that takes as long as a real one would, for the tests
+/// that must catch a sound while it is still playing.
+fn paced_ear() -> EdgeEar {
+    EdgeEar::with_backend(Box::new(FakeBackend::paced())).expect("handle")
+}
+
 /// A short tone, so a test can tell audio from silence.
 fn tone(samples: usize) -> SoundSource {
     SoundSource::Pcm {
@@ -144,9 +150,9 @@ fn reply_audio_arriving_while_running_plays_without_a_restart() {
 
 #[test]
 fn a_newer_sound_takes_over_from_the_one_playing() {
-    let ear = ear();
-    ear.register_sound("first", tone(160_000), 1.0).unwrap();
-    ear.register_sound("second", tone(160_000), 1.0).unwrap();
+    let ear = paced_ear();
+    ear.register_sound("first", tone(16_000), 1.0).unwrap();
+    ear.register_sound("second", tone(16_000), 1.0).unwrap();
 
     ear.play_sound("first", false).unwrap();
     assert!(wait_until(|| ear.is_playing()));
@@ -155,6 +161,7 @@ fn a_newer_sound_takes_over_from_the_one_playing() {
     // One owner of the speaker, so there is only ever one sound.
     assert!(ear.is_playing());
     ear.stop_sound().unwrap();
+    assert!(wait_until(|| !ear.is_playing()));
 }
 
 #[test]
