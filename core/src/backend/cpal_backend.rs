@@ -11,7 +11,7 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Sample, SampleFormat, StreamConfig, SupportedStreamConfig};
 
-use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream};
+use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
 use crate::capture::Samples;
 use crate::capture::ring::Ring;
 use crate::config::{AudioFormat, Device, SampleType};
@@ -99,14 +99,37 @@ fn devices_error(device: Device, message: &str) -> Error {
     classify(device, message)
 }
 
-fn to_audio_format(config: &SupportedStreamConfig) -> Result<AudioFormat> {
-    let sample_type = match config.sample_format() {
+/// Gather what a device offers, in the terms this library speaks. Two
+/// device formats can land on one entry, so the same one is kept once.
+fn collect_formats(
+    ranges: impl Iterator<Item = cpal::SupportedStreamConfigRange>,
+) -> Vec<SupportedFormat> {
+    let mut out: Vec<SupportedFormat> = Vec::new();
+    for range in ranges {
+        let found = SupportedFormat {
+            channels: range.channels(),
+            min_sample_rate: range.min_sample_rate(),
+            max_sample_rate: range.max_sample_rate(),
+            sample_type: sample_type_of(range.sample_format()),
+        };
+        if !out.contains(&found) {
+            out.push(found);
+        }
+    }
+    out
+}
+
+/// What this library hands over for a device's own spelling. Anything
+/// it does not name itself arrives converted, as floats.
+fn sample_type_of(format: SampleFormat) -> SampleType {
+    match format {
         SampleFormat::I16 => SampleType::I16,
-        SampleFormat::F32 => SampleType::F32,
-        // Anything else is converted on the way in, and reported as the
-        // nearest thing this library speaks.
         _ => SampleType::F32,
-    };
+    }
+}
+
+fn to_audio_format(config: &SupportedStreamConfig) -> Result<AudioFormat> {
+    let sample_type = sample_type_of(config.sample_format());
     Ok(AudioFormat::new(
         config.sample_rate(),
         config.channels(),
@@ -450,6 +473,22 @@ impl AudioBackend for CpalBackend {
             gate,
             owner: Some(owner),
         }))
+    }
+
+    fn input_formats(&self, device: Option<&str>) -> Result<Vec<SupportedFormat>> {
+        let device = self.pick_input(device)?;
+        let ranges = device
+            .supported_input_configs()
+            .map_err(|e| classify(Device::Input, &e.to_string()))?;
+        Ok(collect_formats(ranges))
+    }
+
+    fn output_formats(&self, device: Option<&str>) -> Result<Vec<SupportedFormat>> {
+        let device = self.pick_output(device)?;
+        let ranges = device
+            .supported_output_configs()
+            .map_err(|e| classify(Device::Output, &e.to_string()))?;
+        Ok(collect_formats(ranges))
     }
 
     fn input_devices(&self) -> Result<Vec<DeviceInfo>> {

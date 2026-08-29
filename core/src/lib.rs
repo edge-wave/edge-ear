@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use std::time::Duration;
 
-use backend::{AudioBackend, DeviceInfo, FormatRequest};
+use backend::{AudioBackend, DeviceInfo, FormatRequest, SupportedFormat};
 use capture::{CaptureThread, Consumer, ConsumerKind};
 use config::{AudioFormat, Config, Target, TunableConfig};
 use error::{Error, Result};
@@ -786,6 +786,20 @@ impl EdgeEar {
     pub fn output_devices(&self) -> Result<Vec<DeviceInfo>> {
         self.alive()?;
         self.backend_lock().output_devices()
+    }
+
+    /// What a microphone will take, by identifier or `None` for the
+    /// default. Rates come as ranges, which is how a device says it.
+    pub fn input_device_formats(&self, device: Option<&str>) -> Result<Vec<SupportedFormat>> {
+        self.alive()?;
+        self.backend_lock().input_formats(device)
+    }
+
+    /// What a speaker will take. Sounds are converted to whichever of
+    /// these the speaker is opened at, so this says what to expect.
+    pub fn output_device_formats(&self, device: Option<&str>) -> Result<Vec<SupportedFormat>> {
+        self.alive()?;
+        self.backend_lock().output_formats(device)
     }
 
     // ── internals ────────────────────────────────────────────────────
