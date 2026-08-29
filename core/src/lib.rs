@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use backend::{AudioBackend, DeviceInfo, FormatRequest};
 use capture::{CaptureThread, Consumer, ConsumerKind};
-use config::{AudioFormat, Config, Target};
+use config::{AudioFormat, Config, Target, TunableConfig};
 use error::{Error, Result};
 use events::Event;
 use events::dispatch::{DEFAULT_QUEUE_CAPACITY, Dispatcher};
@@ -75,9 +75,9 @@ struct Inner {
     wake_word: Option<std::path::PathBuf>,
     /// Played when the wake word is heard, if the application named one.
     alert: Option<String>,
-    /// Read by the wake and playback threads, so a change reaches them
-    /// without waiting for the next start.
-    waits_for_alert: Arc<AtomicBool>,
+    /// The settings as they stand, shared rather than copied, so a
+    /// change reaches the running threads and not only the next start.
+    tunable: Arc<Mutex<TunableConfig>>,
     /// Set while a wake word recording is waiting for its alert to end.
     waiting_now: Arc<AtomicBool>,
 }
@@ -130,7 +130,7 @@ impl EdgeEar {
                 wake_models: None,
                 wake_word: None,
                 alert: None,
-                waits_for_alert: Arc::new(AtomicBool::new(false)),
+                tunable: Arc::new(Mutex::new(TunableConfig::default())),
                 waiting_now: Arc::new(AtomicBool::new(false)),
             }),
             dispatcher: Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY)),
@@ -169,7 +169,7 @@ impl EdgeEar {
         let speech = Arc::new(SpeechThread::start(
             speech_ring,
             inner.config.fixed.speech_format,
-            inner.config.tunable.clone(),
+            Arc::clone(&inner.tunable),
             Arc::clone(&self.dispatcher),
         )?);
 
@@ -208,11 +208,13 @@ impl EdgeEar {
                     let player = inner.player.clone();
                     let alert = inner.alert.clone();
                     let sounds = Arc::clone(&inner.sounds);
-                    let waits_for_alert = Arc::clone(&inner.waits_for_alert);
                     let waiting_now = Arc::clone(&inner.waiting_now);
-                    let limits = inner.config.tunable.clone();
+                    let tunable = Arc::clone(&inner.tunable);
                     Box::new(move || {
-                        speech.set_limits(limits.clone());
+                        let (pre_roll, waits) = {
+                            let t = tunable.lock().unwrap_or_else(|e| e.into_inner());
+                            (t.pre_roll, t.wake_recording_waits_for_alert)
+                        };
                         match (&player, &alert) {
                             // With an alert, the recording collects
                             // audio at once but does not count silence
@@ -226,20 +228,20 @@ impl EdgeEar {
                                 match found {
                                     Ok(sound) => {
                                         player.play(sound, false);
-                                        if waits_for_alert.load(Ordering::Relaxed) {
+                                        if waits {
                                             waiting_now.store(true, Ordering::Relaxed);
                                             speech.open_recording(Duration::ZERO, false);
                                         } else {
-                                            speech.open_recording(limits.pre_roll, false);
+                                            speech.open_recording(pre_roll, false);
                                         }
                                     }
                                     // The alert was released since it
                                     // was named. Nothing to wait for.
-                                    Err(_) => speech.open_recording(limits.pre_roll, true),
+                                    Err(_) => speech.open_recording(pre_roll, true),
                                 }
                             }
                             // Without one there is nothing to wait for.
-                            _ => speech.open_recording(limits.pre_roll, true),
+                            _ => speech.open_recording(pre_roll, true),
                         }
                     }) as wake::OnWake
                 };
@@ -419,10 +421,8 @@ impl EdgeEar {
     pub fn start_recording(&self) -> Result<()> {
         let inner = self.running_only()?;
         let speech = inner.speech.as_ref().ok_or(Error::NotRunning)?;
-        speech.set_limits(inner.config.tunable.clone());
-
-        // Pre-roll reaches back into audio already gone by. Off by
-        // default, because that stretch may hold an alert sound.
+        // Pre-roll reaches back into audio already gone by, and is off
+        // by default because most callers want only what follows.
         speech.open_recording(inner.config.tunable.pre_roll, true);
         Ok(())
     }
@@ -660,6 +660,9 @@ impl EdgeEar {
         apply(&mut candidate);
         candidate.validate()?;
         inner.config = candidate;
+        // Every tunable is set through here, so this is the one place
+        // the shared copy has to be kept in step.
+        *inner.tunable.lock().unwrap_or_else(|e| e.into_inner()) = inner.config.tunable.clone();
         Ok(())
     }
 
@@ -746,9 +749,7 @@ impl EdgeEar {
         }
         self.tune_recording("waiting for the alert", |c| {
             c.tunable.wake_recording_waits_for_alert = value
-        })?;
-        self.lock().waits_for_alert.store(value, Ordering::Relaxed);
-        Ok(())
+        })
     }
 
     /// True while a recording is collecting audio.

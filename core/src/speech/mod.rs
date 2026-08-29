@@ -388,6 +388,14 @@ mod tests {
     }
 }
 
+/// The handles the speech thread and its owner hold between them.
+struct Shared {
+    control: Arc<Mutex<Control>>,
+    limits: Arc<Mutex<TunableConfig>>,
+    stop: Arc<AtomicBool>,
+    open: Arc<AtomicBool>,
+}
+
 /// What the handle has asked the speech thread to do.
 #[derive(Default)]
 struct Control {
@@ -397,7 +405,6 @@ struct Control {
     stop: bool,
     /// The alert sound has finished; start counting silence.
     start_counting: bool,
-    limits: TunableConfig,
 }
 
 /// Runs speech detection away from the capture thread. Inference takes
@@ -416,24 +423,24 @@ impl SpeechThread {
     pub fn start(
         ring: Arc<Ring<AudioChunk>>,
         format: AudioFormat,
-        limits: TunableConfig,
+        limits: Arc<Mutex<TunableConfig>>,
         dispatcher: Arc<Dispatcher>,
     ) -> Result<Self> {
         let model = SileroModel::bundled(format)?;
-        let control = Arc::new(Mutex::new(Control {
-            limits,
-            ..Default::default()
-        }));
+        let control = Arc::new(Mutex::new(Control::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let open = Arc::new(AtomicBool::new(false));
 
         let worker = {
-            let control = Arc::clone(&control);
-            let stop = Arc::clone(&stop);
-            let open = Arc::clone(&open);
+            let shared = Shared {
+                control: Arc::clone(&control),
+                limits,
+                stop: Arc::clone(&stop),
+                open: Arc::clone(&open),
+            };
             thread::Builder::new()
                 .name("edge-ear-speech".to_string())
-                .spawn(move || run(model, format, ring, control, stop, open, dispatcher))
+                .spawn(move || run(model, format, ring, shared, dispatcher))
                 .map_err(|e| crate::error::Error::Backend {
                     device: crate::config::Device::Input,
                     reason: format!("speech thread would not start: {e}"),
@@ -467,10 +474,6 @@ impl SpeechThread {
         self.lock().start_counting = true;
     }
 
-    pub fn set_limits(&self, limits: TunableConfig) {
-        self.lock().limits = limits;
-    }
-
     pub fn shutdown(&self) {
         self.stop.store(true, Ordering::Relaxed);
         let worker = self.worker.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -494,11 +497,15 @@ fn run(
     model: SileroModel,
     format: AudioFormat,
     ring: Arc<Ring<AudioChunk>>,
-    control: Arc<Mutex<Control>>,
-    stop: Arc<AtomicBool>,
-    open: Arc<AtomicBool>,
+    shared: Shared,
     dispatcher: Arc<Dispatcher>,
 ) {
+    let Shared {
+        control,
+        limits,
+        stop,
+        open,
+    } = shared;
     let mut detector = Detector::new(model, format);
 
     while !stop.load(Ordering::Relaxed) {
@@ -510,15 +517,17 @@ fn run(
             Err(_) => break,
         };
 
-        let (opening, should_stop, counting, limits) = {
+        let (opening, should_stop, counting) = {
             let mut c = control.lock().unwrap_or_else(|e| e.into_inner());
             (
                 c.open.take(),
                 std::mem::take(&mut c.stop),
                 std::mem::take(&mut c.start_counting),
-                c.limits.clone(),
             )
         };
+        // Read fresh every pass, so a setting changed while running is
+        // followed by whichever path opened the recording.
+        let limits = limits.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
         detector.set_history_limit(limits.pre_roll);
         if let Some((pre_roll, counting_now)) = opening {
