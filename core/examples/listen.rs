@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use edge_ear_core::EdgeEar;
-use edge_ear_core::SoundSource;
-use edge_ear_core::config::{AudioFormat, SampleType, Target};
+use edge_ear_core::config::{AudioFormat, Target};
 use edge_ear_core::events::Event;
+use edge_ear_core::{Samples, SoundSource};
 
 const HELP: &str = "\
 listen — hear what the library hears
@@ -258,10 +258,9 @@ fn beep() -> SoundSource {
         })
         .collect();
     SoundSource::Pcm {
-        data,
+        data: Samples::I16(data),
         sample_rate: 16_000,
         channels: 1,
-        sample_type: SampleType::I16,
     }
 }
 

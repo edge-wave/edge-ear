@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use edge_ear_core::Samples;
 use edge_ear_core::backend::fake::FakeBackend;
-use edge_ear_core::config::SampleType;
 use edge_ear_core::events::Event;
 use edge_ear_core::{EdgeEar, SoundSource};
 
@@ -127,10 +127,9 @@ fn a_sound_the_library_played_is_reached_back_into() {
     ear.register_sound(
         "beep",
         SoundSource::Pcm {
-            data: vec![9000; 1600],
+            data: Samples::I16(vec![9000; 1600]),
             sample_rate: 16_000,
             channels: 1,
-            sample_type: SampleType::I16,
         },
         1.0,
     )

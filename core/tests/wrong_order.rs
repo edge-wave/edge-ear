@@ -4,8 +4,9 @@
 
 use std::time::{Duration, Instant};
 
+use edge_ear_core::Samples;
 use edge_ear_core::backend::fake::FakeBackend;
-use edge_ear_core::config::{AudioFormat, SampleType, Target};
+use edge_ear_core::config::{AudioFormat, Target};
 use edge_ear_core::error::Error;
 use edge_ear_core::{EdgeEar, SoundSource};
 
@@ -15,10 +16,9 @@ fn ear() -> EdgeEar {
 
 fn tone() -> SoundSource {
     SoundSource::Pcm {
-        data: vec![1000; 1600],
+        data: Samples::I16(vec![1000; 1600]),
         sample_rate: 16_000,
         channels: 1,
-        sample_type: SampleType::I16,
     }
 }
 
