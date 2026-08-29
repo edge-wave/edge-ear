@@ -118,7 +118,12 @@ impl Player {
     }
 
     pub fn shutdown(&self) {
-        self.stop.store(true, Ordering::Relaxed);
+        // Set under the lock the worker parks beneath, because a stop
+        // reaching it between its look and its wait would be lost.
+        {
+            let _state = self.lock();
+            self.stop.store(true, Ordering::Relaxed);
+        }
         self.wake.notify_all();
         let worker = self.worker.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(worker) = worker {
