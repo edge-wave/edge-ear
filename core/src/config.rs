@@ -163,6 +163,10 @@ pub struct FixedConfig {
     pub read_format: AudioFormat,
     pub input_device: Option<String>,
     pub output_device: Option<String>,
+    /// What to open the devices at. `None` takes whatever they offer
+    /// by default, which is what they were always opened at.
+    pub input_device_format: Option<AudioFormat>,
+    pub output_device_format: Option<AudioFormat>,
     pub ring_capacity: Duration,
 }
 
@@ -174,6 +178,8 @@ impl Default for FixedConfig {
             read_format: AudioFormat::mono_16k(),
             input_device: None,
             output_device: None,
+            input_device_format: None,
+            output_device_format: None,
             ring_capacity: Duration::from_secs(2),
         }
     }

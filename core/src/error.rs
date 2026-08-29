@@ -47,6 +47,13 @@ pub enum Error {
         expected: String,
     },
 
+    #[error("the {device} device does not open at {got}; it offers {offered}")]
+    DeviceFormat {
+        device: Device,
+        got: String,
+        offered: String,
+    },
+
     #[error("{setting} must be {expected}, got {got}")]
     InvalidValue {
         setting: &'static str,
