@@ -8,6 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use edge_ear_core::EdgeEar;
+use edge_ear_core::Samples;
 use edge_ear_core::backend::fake::FakeBackend;
 use edge_ear_core::events::Event;
 
@@ -238,10 +239,9 @@ fn destroying_while_capture_and_playback_run_does_not_hang() {
     ear.register_sound(
         "tone",
         edge_ear_core::SoundSource::Pcm {
-            data: vec![3000; 160_000],
+            data: Samples::I16(vec![3000; 160_000]),
             sample_rate: 16_000,
             channels: 1,
-            sample_type: edge_ear_core::config::SampleType::I16,
         },
         0.5,
     )
@@ -323,10 +323,9 @@ fn events_keep_arriving_in_order_behind_a_slow_handler() {
     ear.register_sound(
         "beep",
         edge_ear_core::SoundSource::Pcm {
-            data: vec![2000; 1600],
+            data: Samples::I16(vec![2000; 1600]),
             sample_rate: 16_000,
             channels: 1,
-            sample_type: edge_ear_core::config::SampleType::I16,
         },
         0.5,
     )

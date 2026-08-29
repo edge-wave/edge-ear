@@ -8,9 +8,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use edge_ear_core::EdgeEar;
+use edge_ear_core::Samples;
+use edge_ear_core::SoundSource;
 use edge_ear_core::backend::fake::FakeBackend;
 use edge_ear_core::events::Event;
-use edge_ear_core::{SoundSource, config::SampleType};
 
 fn how_long() -> Duration {
     let secs = std::env::var("EDGE_EAR_SOAK_SECS")
@@ -58,12 +59,13 @@ fn an_hour_of_audio_with_no_gaps_and_flat_memory() {
     ear.register_sound(
         "beep",
         SoundSource::Pcm {
-            data: (0..3200)
-                .map(|i| ((i as f32 * 0.2).sin() * 6000.0) as i16)
-                .collect(),
+            data: Samples::I16(
+                (0..3200)
+                    .map(|i| ((i as f32 * 0.2).sin() * 6000.0) as i16)
+                    .collect(),
+            ),
             sample_rate: 16_000,
             channels: 1,
-            sample_type: SampleType::I16,
         },
         0.5,
     )

@@ -8,11 +8,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use edge_ear_core::EdgeEar;
-use edge_ear_core::SoundSource;
 use edge_ear_core::backend::fake::{FakeBackend, FakeFailure};
-use edge_ear_core::config::SampleType;
 use edge_ear_core::error::Error;
 use edge_ear_core::events::Event;
+use edge_ear_core::{Samples, SoundSource};
 
 fn ear() -> EdgeEar {
     EdgeEar::with_backend(Box::new(FakeBackend::silent())).expect("handle")
@@ -21,12 +20,13 @@ fn ear() -> EdgeEar {
 /// A short tone, so a test can tell audio from silence.
 fn tone(samples: usize) -> SoundSource {
     SoundSource::Pcm {
-        data: (0..samples)
-            .map(|n| ((n as f32 * 0.1).sin() * 8000.0) as i16)
-            .collect(),
+        data: Samples::I16(
+            (0..samples)
+                .map(|n| ((n as f32 * 0.1).sin() * 8000.0) as i16)
+                .collect(),
+        ),
         sample_rate: 16_000,
         channels: 1,
-        sample_type: SampleType::I16,
     }
 }
 
@@ -127,10 +127,9 @@ fn reply_audio_arriving_while_running_plays_without_a_restart() {
     ear.register_sound(
         "reply",
         SoundSource::Pcm {
-            data: (0..24_000).map(|n| ((n % 100) as i16) * 100).collect(),
+            data: Samples::I16((0..24_000).map(|n| ((n % 100) as i16) * 100).collect()),
             sample_rate: 24_000,
             channels: 1,
-            sample_type: SampleType::I16,
         },
         1.0,
     )

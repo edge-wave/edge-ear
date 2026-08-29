@@ -27,10 +27,11 @@ pub enum SoundSource {
         path: PathBuf,
     },
     Pcm {
-        data: Vec<i16>,
+        /// Raw audio carries no header, so the caller says what it is.
+        /// The type travels with the samples and cannot be misdeclared.
+        data: Samples,
         sample_rate: u32,
         channels: u16,
-        sample_type: SampleType,
     },
 }
 
@@ -82,13 +83,18 @@ impl Registry {
         }
 
         let (raw, source_format) = match source {
-            SoundSource::File { path } => decode_file(&path)?,
+            SoundSource::File { path } => {
+                let (samples, format) = decode_file(&path)?;
+                (Samples::I16(samples), format)
+            }
             SoundSource::Pcm {
                 data,
                 sample_rate,
                 channels,
-                sample_type,
-            } => (data, AudioFormat::new(sample_rate, channels, sample_type)),
+            } => {
+                let format = AudioFormat::new(sample_rate, channels, data.sample_type());
+                (data, format)
+            }
         };
 
         let at_output = to_output(&raw, source_format, output)?;
@@ -237,30 +243,27 @@ fn spec_of(decoded: &GenericAudioBufferRef<'_>) -> AudioFormat {
 }
 
 /// Bring a decoded sound to the format the speaker is running at.
-fn to_output(raw: &[i16], from: AudioFormat, to: AudioFormat) -> Result<Vec<i16>> {
-    if from.sample_rate == to.sample_rate && from.channels == to.channels {
-        return Ok(raw.to_vec());
-    }
+/// Bring a sound to what the speaker takes. Sounds are kept as 16-bit
+/// whatever they arrived as, so this is where a 32-bit source lands.
+fn to_output(raw: &Samples, from: AudioFormat, to: AudioFormat) -> Result<Vec<i16>> {
+    let wanted = AudioFormat::new(to.sample_rate, to.channels, SampleType::I16);
+    let mut converter = crate::capture::convert::Converter::new(from, wanted)?;
 
-    let mut converter = crate::capture::convert::Converter::new(
-        AudioFormat::new(from.sample_rate, from.channels, SampleType::I16),
-        AudioFormat::new(to.sample_rate, to.channels, SampleType::I16),
-    )?;
+    let mut out = as_i16(converter.convert(raw)?);
+    // Take whatever the resampler was still holding, so the end of a
+    // short sound is not clipped off.
+    out.append(&mut as_i16(converter.flush()?));
+    Ok(out)
+}
 
-    let mut out = match converter.convert(&Samples::I16(raw.to_vec()))? {
+fn as_i16(samples: Samples) -> Vec<i16> {
+    match samples {
         Samples::I16(v) => v,
         Samples::F32(v) => v
             .iter()
             .map(|s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
             .collect(),
-    };
-
-    // Take whatever the resampler was still holding, so the end of a
-    // short sound is not clipped off.
-    if let Samples::I16(mut tail) = converter.flush()? {
-        out.append(&mut tail);
     }
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -273,10 +276,9 @@ mod tests {
 
     fn pcm(samples: usize) -> SoundSource {
         SoundSource::Pcm {
-            data: vec![8_000; samples],
+            data: Samples::I16(vec![8_000; samples]),
             sample_rate: 16_000,
             channels: 1,
-            sample_type: SampleType::I16,
         }
     }
 
@@ -369,10 +371,9 @@ mod tests {
                 "reply".into(),
                 SoundSource::Pcm {
                     // Reply audio often arrives at 24 kHz.
-                    data: vec![4_000; 24_000],
+                    data: Samples::I16(vec![4_000; 24_000]),
                     sample_rate: 24_000,
                     channels: 1,
-                    sample_type: SampleType::I16,
                 },
                 1.0,
                 output(),

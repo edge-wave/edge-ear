@@ -7,8 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use edge_ear_core::Samples;
 use edge_ear_core::backend::fake::{FakeBackend, FakeSetup};
-use edge_ear_core::config::{AudioFormat, SampleType};
+use edge_ear_core::config::AudioFormat;
 use edge_ear_core::error::Error;
 use edge_ear_core::events::{EndReason, Event};
 use edge_ear_core::{EdgeEar, SoundSource};
@@ -23,10 +24,9 @@ fn model_dir() -> Option<PathBuf> {
 
 fn alert() -> SoundSource {
     SoundSource::Pcm {
-        data: vec![3000; 3200], // 200 ms
+        data: Samples::I16(vec![3000; 3200]), // 200 ms
         sample_rate: 16_000,
         channels: 1,
-        sample_type: SampleType::I16,
     }
 }
 
@@ -168,10 +168,9 @@ fn a_recording_opened_behind_an_alert_waits_for_it() {
     ear.register_sound(
         "long",
         SoundSource::Pcm {
-            data: vec![3000; 16_000], // one second
+            data: Samples::I16(vec![3000; 16_000]), // one second
             sample_rate: 16_000,
             channels: 1,
-            sample_type: SampleType::I16,
         },
         0.4,
     )
@@ -368,10 +367,9 @@ fn cutting_the_alert_short_still_lets_the_recording_end() {
     ear.register_sound(
         "beep",
         SoundSource::Pcm {
-            data: vec![3000; 160_000],
+            data: Samples::I16(vec![3000; 160_000]),
             sample_rate: 16_000,
             channels: 1,
-            sample_type: SampleType::I16,
         },
         0.4,
     )

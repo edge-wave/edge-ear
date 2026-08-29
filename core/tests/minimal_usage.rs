@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use edge_ear_core::EdgeEar;
+use edge_ear_core::Samples;
 use edge_ear_core::backend::fake::FakeBackend;
 
 /// Nothing to configure, nothing to load, nothing to switch on.
@@ -44,10 +45,9 @@ fn playing_a_sound_takes_two_calls() {
     ear.register_sound(
         "alert",
         edge_ear_core::SoundSource::Pcm {
-            data: vec![2000; 1600],
+            data: Samples::I16(vec![2000; 1600]),
             sample_rate: 16_000,
             channels: 1,
-            sample_type: edge_ear_core::config::SampleType::I16,
         },
         0.8,
     )
