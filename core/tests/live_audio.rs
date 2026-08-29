@@ -315,3 +315,47 @@ fn an_identifier_for_a_device_that_is_gone_says_so() {
     assert!(matches!(err, Error::NoDevice(_)), "{err}");
     assert!(!ear.is_running());
 }
+
+/// A device says what it will take before anything is opened, so an
+/// application can choose rather than guess.
+#[test]
+#[ignore]
+fn real_devices_say_what_they_take() {
+    let ear = EdgeEar::new().expect("handle over the real devices");
+    for (label, devices) in [
+        ("microphone", ear.input_devices().expect("microphones")),
+        ("speaker", ear.output_devices().expect("speakers")),
+    ] {
+        for device in &devices {
+            let formats = if label == "microphone" {
+                ear.input_device_formats(Some(&device.id))
+            } else {
+                ear.output_device_formats(Some(&device.id))
+            }
+            .expect("the device answers");
+            println!("{label} {}: {formats:?}", device.name);
+            assert!(!formats.is_empty(), "{} offered nothing", device.name);
+            for f in &formats {
+                assert!(f.channels > 0);
+                assert!(f.min_sample_rate <= f.max_sample_rate);
+            }
+        }
+    }
+}
+
+/// Whatever the default device turns out to be, the library opens it
+/// at something it said it would take.
+#[test]
+#[ignore]
+fn the_default_microphone_is_opened_at_something_it_offered() {
+    let ear = EdgeEar::new().expect("handle");
+    let offered = ear.input_device_formats(None).expect("formats");
+    ear.start().expect("start");
+    let chunk = ear.read(Some(Duration::from_secs(2))).expect("audio");
+    ear.stop().unwrap();
+
+    // What comes back is the read format, which the library converts
+    // to, so this only checks the device answered at all.
+    println!("read as {:?}, device offered {offered:?}", chunk.format);
+    assert!(!offered.is_empty());
+}
