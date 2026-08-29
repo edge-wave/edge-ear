@@ -816,6 +816,75 @@ int32_t edge_ear_stop_sound(edge_ear_h *ear);
 int32_t edge_ear_is_playing(edge_ear_h *ear);
 
 /**
+ * @brief Open the microphone at this rather than at its default.
+ *
+ * Refused here if the named device does not offer it, and again when
+ * capture starts, because the device may have changed by then. Pass
+ * zero for `sample_rate` to go back to the device's own choice.
+ *
+ * @param[in] ear the handle
+ * @param[in] sample_rate the rate to open at, or 0 for the default
+ * @param[in] channels 1 or 2
+ * @param[in] sample_type how one sample is written
+ * @return #EDGE_EAR_OK, #EDGE_EAR_UNSUPPORTED_FORMAT when the device
+ *         does not offer it, or another negative #edge_ear_error.
+ * @see edge_ear_input_device_formats, edge_ear_input_format
+ */
+int32_t edge_ear_set_input_device_format(edge_ear_h *ear,
+                                         uint32_t sample_rate,
+                                         uint16_t channels,
+                                         edge_ear_sample_type sample_type);
+
+/**
+ * @brief Open the speaker at this rather than at its default.
+ *
+ * Fixed once the speaker is open, which is when the first sound is
+ * registered or played. Pass zero for `sample_rate` to go back to the
+ * device's own choice.
+ *
+ * @param[in] ear the handle
+ * @param[in] sample_rate the rate to open at, or 0 for the default
+ * @param[in] channels 1 or 2
+ * @param[in] sample_type how one sample is written
+ * @return #EDGE_EAR_OK, #EDGE_EAR_UNSUPPORTED_FORMAT when the device
+ *         does not offer it, #EDGE_EAR_RUNNING_NOT_ALLOWED once the
+ *         speaker is open, or another negative #edge_ear_error.
+ * @see edge_ear_output_device_formats, edge_ear_output_format
+ */
+int32_t edge_ear_set_output_device_format(edge_ear_h *ear,
+                                          uint32_t sample_rate,
+                                          uint16_t channels,
+                                          edge_ear_sample_type sample_type);
+
+/**
+ * @brief What the microphone opened at.
+ *
+ * Not always what was asked for. The two rates in `format` are equal,
+ * because an open device runs at one.
+ *
+ * @param[in] ear the handle
+ * @param[out] format where it goes
+ * @return #EDGE_EAR_OK, #EDGE_EAR_NOT_RUNNING before capture starts,
+ *         or another negative #edge_ear_error.
+ * @see edge_ear_set_input_device_format
+ */
+int32_t edge_ear_input_format(edge_ear_h *ear, edge_ear_format *format);
+
+/**
+ * @brief What the speaker opened at.
+ *
+ * Not always what was asked for. The two rates in `format` are equal,
+ * because an open device runs at one.
+ *
+ * @param[in] ear the handle
+ * @param[out] format where it goes
+ * @return #EDGE_EAR_OK, #EDGE_EAR_NOT_RUNNING before the first sound
+ *         opens the speaker, or another negative #edge_ear_error.
+ * @see edge_ear_set_output_device_format
+ */
+int32_t edge_ear_output_format(edge_ear_h *ear, edge_ear_format *format);
+
+/**
  * @brief What one microphone will take.
  *
  * Rates come as a span, because that is how a device describes

@@ -822,6 +822,127 @@ fn list_devices(
     OK
 }
 
+/// @brief Open the microphone at this rather than at its default.
+///
+/// Refused here if the named device does not offer it, and again when
+/// capture starts, because the device may have changed by then. Pass
+/// zero for `sample_rate` to go back to the device's own choice.
+///
+/// @param[in] ear the handle
+/// @param[in] sample_rate the rate to open at, or 0 for the default
+/// @param[in] channels 1 or 2
+/// @param[in] sample_type how one sample is written
+/// @return #EDGE_EAR_OK, #EDGE_EAR_UNSUPPORTED_FORMAT when the device
+///         does not offer it, or another negative #edge_ear_error.
+/// @see edge_ear_input_device_formats, edge_ear_input_format
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_input_device_format(
+    ear: *mut edge_ear_h,
+    sample_rate: u32,
+    channels: u16,
+    sample_type: edge_ear_sample_type,
+) -> i32 {
+    with!(ear, e => report(e.core.set_input_device_format(wanted_format(
+        sample_rate, channels, sample_type,
+    ))))
+}
+
+/// @brief Open the speaker at this rather than at its default.
+///
+/// Fixed once the speaker is open, which is when the first sound is
+/// registered or played. Pass zero for `sample_rate` to go back to the
+/// device's own choice.
+///
+/// @param[in] ear the handle
+/// @param[in] sample_rate the rate to open at, or 0 for the default
+/// @param[in] channels 1 or 2
+/// @param[in] sample_type how one sample is written
+/// @return #EDGE_EAR_OK, #EDGE_EAR_UNSUPPORTED_FORMAT when the device
+///         does not offer it, #EDGE_EAR_RUNNING_NOT_ALLOWED once the
+///         speaker is open, or another negative #edge_ear_error.
+/// @see edge_ear_output_device_formats, edge_ear_output_format
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_output_device_format(
+    ear: *mut edge_ear_h,
+    sample_rate: u32,
+    channels: u16,
+    sample_type: edge_ear_sample_type,
+) -> i32 {
+    with!(ear, e => report(e.core.set_output_device_format(wanted_format(
+        sample_rate, channels, sample_type,
+    ))))
+}
+
+/// @brief What the microphone opened at.
+///
+/// Not always what was asked for. The two rates in `format` are equal,
+/// because an open device runs at one.
+///
+/// @param[in] ear the handle
+/// @param[out] format where it goes
+/// @return #EDGE_EAR_OK, #EDGE_EAR_NOT_RUNNING before capture starts,
+///         or another negative #edge_ear_error.
+/// @see edge_ear_set_input_device_format
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_input_format(
+    ear: *mut edge_ear_h,
+    format: *mut edge_ear_format,
+) -> i32 {
+    with!(ear, e => opened_format(e.core.input_format(), format, EDGE_EAR_NOT_RUNNING))
+}
+
+/// @brief What the speaker opened at.
+///
+/// Not always what was asked for. The two rates in `format` are equal,
+/// because an open device runs at one.
+///
+/// @param[in] ear the handle
+/// @param[out] format where it goes
+/// @return #EDGE_EAR_OK, #EDGE_EAR_NOT_RUNNING before the first sound
+///         opens the speaker, or another negative #edge_ear_error.
+/// @see edge_ear_set_output_device_format
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_output_format(
+    ear: *mut edge_ear_h,
+    format: *mut edge_ear_format,
+) -> i32 {
+    with!(ear, e => opened_format(e.core.output_format(), format, EDGE_EAR_NOT_RUNNING))
+}
+
+/// A rate of zero asks for the device's own choice.
+fn wanted_format(
+    sample_rate: u32,
+    channels: u16,
+    sample_type: edge_ear_sample_type,
+) -> Option<AudioFormat> {
+    (sample_rate > 0).then(|| AudioFormat::new(sample_rate, channels, sample_type_of(sample_type)))
+}
+
+/// An open device runs at one rate, so both ends of the span are it.
+fn opened_format(
+    found: Option<AudioFormat>,
+    out: *mut edge_ear_format,
+    missing: edge_ear_error,
+) -> i32 {
+    let out = match out_ptr(out, "format") {
+        Ok(slot) => slot,
+        Err(code) => return code,
+    };
+    let Some(found) = found else {
+        return fail_with(missing, "the device is not open");
+    };
+    *out = edge_ear_format {
+        channels: found.channels,
+        min_sample_rate: found.sample_rate,
+        max_sample_rate: found.sample_rate,
+        sample_type: match found.sample_type {
+            SampleType::I16 => edge_ear_sample_type::EDGE_EAR_SAMPLE_TYPE_I16,
+            SampleType::F32 => edge_ear_sample_type::EDGE_EAR_SAMPLE_TYPE_F32,
+        },
+    };
+    OK
+}
+
 /// @brief What one microphone will take.
 ///
 /// Rates come as a span, because that is how a device describes

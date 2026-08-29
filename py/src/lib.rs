@@ -50,7 +50,9 @@ fn to_py(error: Error) -> PyErr {
         Error::ModelNotFound { .. } => ModelNotFound::new_err(text),
         Error::ModelUnreadable { .. } => ModelUnreadable::new_err(text),
         Error::ModelInvalid { .. } => ModelInvalid::new_err(text),
-        Error::UnsupportedFormat { .. } => UnsupportedFormat::new_err(text),
+        Error::UnsupportedFormat { .. } | Error::DeviceFormat { .. } => {
+            UnsupportedFormat::new_err(text)
+        }
         Error::InvalidValue { .. } => InvalidValue::new_err(text),
         Error::NoDevice(_) => NoDevice::new_err(text),
         Error::PermissionDenied => PermissionDenied::new_err(text),
@@ -588,6 +590,42 @@ impl EdgeEar {
             .collect())
     }
 
+    /// Open the microphone at this. None goes back to its default.
+    #[pyo3(signature = (sample_rate = None, channels = 1, sample_type = "i16"))]
+    fn set_input_device_format(
+        &self,
+        sample_rate: Option<u32>,
+        channels: u16,
+        sample_type: &str,
+    ) -> PyResult<()> {
+        let wanted = wanted_format(sample_rate, channels, sample_type)?;
+        self.core.set_input_device_format(wanted).map_err(to_py)
+    }
+
+    /// Open the speaker at this. Fixed once the first sound opens it.
+    #[pyo3(signature = (sample_rate = None, channels = 1, sample_type = "i16"))]
+    fn set_output_device_format(
+        &self,
+        sample_rate: Option<u32>,
+        channels: u16,
+        sample_type: &str,
+    ) -> PyResult<()> {
+        let wanted = wanted_format(sample_rate, channels, sample_type)?;
+        self.core.set_output_device_format(wanted).map_err(to_py)
+    }
+
+    /// What the microphone opened at, or None before capture starts.
+    #[getter]
+    fn input_format(&self) -> Option<SupportedFormat> {
+        self.core.input_format().map(opened_format)
+    }
+
+    /// What the speaker opened at, or None before a sound opens it.
+    #[getter]
+    fn output_format(&self) -> Option<SupportedFormat> {
+        self.core.output_format().map(opened_format)
+    }
+
     #[pyo3(signature = (device = None))]
     fn input_device_formats(&self, device: Option<&str>) -> PyResult<Vec<SupportedFormat>> {
         formats_of(self.core.input_device_formats(device))
@@ -680,6 +718,34 @@ impl EdgeEar {
 
     fn __repr__(&self) -> String {
         format!("EdgeEar(running={})", self.core.is_running())
+    }
+}
+
+fn wanted_format(
+    sample_rate: Option<u32>,
+    channels: u16,
+    sample_type: &str,
+) -> PyResult<Option<AudioFormat>> {
+    let Some(rate) = sample_rate else {
+        return Ok(None);
+    };
+    Ok(Some(AudioFormat::new(
+        rate,
+        channels,
+        sample_type_of(sample_type)?,
+    )))
+}
+
+/// An open device runs at one rate, so both ends of the span are it.
+fn opened_format(found: AudioFormat) -> SupportedFormat {
+    SupportedFormat {
+        channels: found.channels,
+        min_sample_rate: found.sample_rate,
+        max_sample_rate: found.sample_rate,
+        sample_type: match found.sample_type {
+            SampleType::I16 => "i16".to_string(),
+            SampleType::F32 => "f32".to_string(),
+        },
     }
 }
 

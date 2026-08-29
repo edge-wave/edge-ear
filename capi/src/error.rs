@@ -75,7 +75,7 @@ pub fn code_of(error: &Error) -> edge_ear_error {
         Error::ModelNotFound { .. } => EDGE_EAR_MODEL_NOT_FOUND,
         Error::ModelUnreadable { .. } => EDGE_EAR_MODEL_UNREADABLE,
         Error::ModelInvalid { .. } => EDGE_EAR_MODEL_INVALID,
-        Error::UnsupportedFormat { .. } => EDGE_EAR_UNSUPPORTED_FORMAT,
+        Error::UnsupportedFormat { .. } | Error::DeviceFormat { .. } => EDGE_EAR_UNSUPPORTED_FORMAT,
         Error::InvalidValue { .. } => EDGE_EAR_INVALID_VALUE,
         Error::NoDevice(_) => EDGE_EAR_NO_DEVICE,
         Error::PermissionDenied => EDGE_EAR_PERMISSION_DENIED,
