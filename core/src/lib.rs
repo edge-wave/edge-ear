@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use backend::{AudioBackend, DeviceInfo, FormatRequest, SupportedFormat};
 use capture::{CaptureThread, Consumer, ConsumerKind};
-use config::{AudioFormat, Config, Target, TunableConfig};
+use config::{AudioFormat, Config, Device, Target, TunableConfig};
 use error::{Error, Result};
 use events::Event;
 use events::dispatch::{DEFAULT_QUEUE_CAPACITY, Dispatcher};
@@ -80,6 +80,9 @@ struct Inner {
     tunable: Arc<Mutex<TunableConfig>>,
     /// Set while a wake word recording is waiting for its alert to end.
     waiting_now: Arc<AtomicBool>,
+    /// What the microphone opened at, which is not always what was
+    /// asked for. Only while capture runs.
+    opened_input: Option<AudioFormat>,
 }
 
 impl Inner {
@@ -132,6 +135,7 @@ impl EdgeEar {
                 alert: None,
                 tunable: Arc::new(Mutex::new(TunableConfig::default())),
                 waiting_now: Arc::new(AtomicBool::new(false)),
+                opened_input: None,
             }),
             dispatcher: Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY)),
             backend: Mutex::new(backend),
@@ -153,9 +157,10 @@ impl EdgeEar {
 
         let request = FormatRequest {
             device: inner.config.fixed.input_device.clone(),
-            preferred: inner.config.fixed.read_format,
+            wanted: inner.config.fixed.input_device_format,
         };
         let stream = self.backend_lock().open_input(&request)?;
+        inner.opened_input = Some(stream.format());
 
         let consumers = build_consumers(&inner.config, inner.wake_wanted, inner.speech_wanted);
         let capture =
@@ -285,6 +290,7 @@ impl EdgeEar {
                     wake.shutdown();
                 }
                 inner.consumers.clear();
+                inner.opened_input = None;
                 Ok(())
             }
         }
@@ -541,7 +547,7 @@ impl EdgeEar {
             let inner = self.lock();
             FormatRequest {
                 device: inner.config.fixed.output_device.clone(),
-                preferred: inner.config.fixed.read_format,
+                wanted: inner.config.fixed.output_device_format,
             }
         };
         let stream = self.backend_lock().open_output(&request)?;
@@ -637,7 +643,7 @@ impl EdgeEar {
     /// Choose a speaker by its identifier. `None` means the one the
     /// system prefers. Fixed once capture has started.
     pub fn set_output_device(&self, name: Option<&str>) -> Result<()> {
-        let mut inner = self.stopped_only("the output device")?;
+        let mut inner = self.speaker_shut_only("the output device")?;
         inner.config.fixed.output_device = name.map(str::to_string);
         Ok(())
     }
@@ -788,6 +794,47 @@ impl EdgeEar {
         self.backend_lock().output_devices()
     }
 
+    /// Open the microphone at this, rather than at whatever it offers
+    /// by default. `None` goes back to the default.
+    ///
+    /// Refused here if the named device does not offer it, and again
+    /// when capture starts, because the device may have changed.
+    pub fn set_input_device_format(&self, format: Option<AudioFormat>) -> Result<()> {
+        let mut inner = self.stopped_only("the microphone format")?;
+        if let Some(wanted) = format {
+            let device = inner.config.fixed.input_device.clone();
+            let offered = self.backend_lock().input_formats(device.as_deref())?;
+            refuse_unless_offered(&offered, wanted, Device::Input)?;
+        }
+        inner.config.fixed.input_device_format = format;
+        Ok(())
+    }
+
+    /// Open the speaker at this. Fixed once the speaker is open, which
+    /// is when the first sound is registered or played.
+    pub fn set_output_device_format(&self, format: Option<AudioFormat>) -> Result<()> {
+        let mut inner = self.speaker_shut_only("the speaker format")?;
+        if let Some(wanted) = format {
+            let device = inner.config.fixed.output_device.clone();
+            let offered = self.backend_lock().output_formats(device.as_deref())?;
+            refuse_unless_offered(&offered, wanted, Device::Output)?;
+        }
+        inner.config.fixed.output_device_format = format;
+        Ok(())
+    }
+
+    /// What the microphone opened at, which is not always what was
+    /// asked for. `None` until capture starts.
+    pub fn input_format(&self) -> Option<AudioFormat> {
+        self.lock().opened_input
+    }
+
+    /// What the speaker opened at. `None` until the first sound opens
+    /// it.
+    pub fn output_format(&self) -> Option<AudioFormat> {
+        self.lock().player.as_ref().map(|p| p.format())
+    }
+
     /// What a microphone will take, by identifier or `None` for the
     /// default. Rates come as ranges, which is how a device says it.
     pub fn input_device_formats(&self, device: Option<&str>) -> Result<Vec<SupportedFormat>> {
@@ -827,6 +874,16 @@ impl EdgeEar {
         }
     }
 
+    /// The speaker opens on the first sound and stays open until the
+    /// handle is destroyed, so capture's state says nothing about it.
+    fn speaker_shut_only(&self, what: &'static str) -> Result<MutexGuard<'_, Inner>> {
+        let inner = self.alive_mut()?;
+        if inner.player.is_some() {
+            return Err(Error::RunningNotAllowed { what });
+        }
+        Ok(inner)
+    }
+
     fn stopped_only(&self, what: &'static str) -> Result<MutexGuard<'_, Inner>> {
         let inner = self.lock();
         match inner.state {
@@ -841,6 +898,45 @@ impl Drop for EdgeEar {
     fn drop(&mut self) {
         self.destroy();
     }
+}
+
+/// A format the device never offered is refused by name of what it
+/// does, rather than quietly turning into something else.
+pub(crate) fn refuse_unless_offered(
+    offered: &[SupportedFormat],
+    wanted: AudioFormat,
+    device: Device,
+) -> Result<()> {
+    if offered.iter().any(|f| f.covers(&wanted)) {
+        return Ok(());
+    }
+    Err(Error::DeviceFormat {
+        device,
+        got: format!(
+            "{} Hz, {} channels, {}",
+            wanted.sample_rate, wanted.channels, wanted.sample_type
+        ),
+        offered: describe_offered(offered),
+    })
+}
+
+/// What a device offers, short enough to put in a message.
+pub(crate) fn describe_offered(offered: &[SupportedFormat]) -> String {
+    if offered.is_empty() {
+        return "nothing this library can speak".to_string();
+    }
+    offered
+        .iter()
+        .map(|f| {
+            let rate = if f.min_sample_rate == f.max_sample_rate {
+                f.min_sample_rate.to_string()
+            } else {
+                format!("{}-{}", f.min_sample_rate, f.max_sample_rate)
+            };
+            format!("{rate} Hz/{}ch/{}", f.channels, f.sample_type)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// What the end of an alert means to the recording behind it, whether

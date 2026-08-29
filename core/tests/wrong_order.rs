@@ -115,12 +115,9 @@ fn the_calls_that_need_capture_say_so_when_it_is_not_running() {
 
 #[test]
 fn the_settings_fixed_at_start_refuse_once_capture_is_running() {
-    let fixed_at_start = [
-        "set_format",
-        "set_input_device",
-        "set_output_device",
-        "set_ring_capacity",
-    ];
+    // The speaker is not opened by starting capture, so what it is
+    // opened at is fixed by its own rule rather than this one.
+    let fixed_at_start = ["set_format", "set_input_device", "set_ring_capacity"];
     for entry in every_entry_point() {
         if !fixed_at_start.contains(&entry.name) {
             continue;

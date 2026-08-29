@@ -47,7 +47,9 @@ impl SupportedFormat {
 #[derive(Debug, Clone)]
 pub struct FormatRequest {
     pub device: Option<String>,
-    pub preferred: AudioFormat,
+    /// What the device should be opened at. `None` leaves the choice
+    /// to the device, which is what most callers want.
+    pub wanted: Option<AudioFormat>,
 }
 
 /// A microphone stream. Owned by exactly one capture thread.

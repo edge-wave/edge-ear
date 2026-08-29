@@ -260,7 +260,7 @@ impl AudioBackend for FakeBackend {
         Ok(Box::new(FakeOutput {
             paced: self.setup.paced,
             due: None,
-            format: req.preferred,
+            format: req.wanted.unwrap_or(AudioFormat::mono_16k()),
             log: Arc::clone(&self.playback),
         }))
     }
@@ -355,7 +355,7 @@ mod tests {
     fn request() -> FormatRequest {
         FormatRequest {
             device: None,
-            preferred: AudioFormat::mono_16k(),
+            wanted: None,
         }
     }
 

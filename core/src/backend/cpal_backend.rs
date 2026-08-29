@@ -99,6 +99,37 @@ fn devices_error(device: Device, message: &str) -> Error {
     classify(device, message)
 }
 
+/// The device's own config for a format it said it would take. Refused
+/// by name of what it does offer, rather than quietly given something
+/// else.
+fn pick_config(
+    offered: impl Iterator<Item = cpal::SupportedStreamConfigRange>,
+    wanted: AudioFormat,
+    device: Device,
+) -> Result<SupportedStreamConfig> {
+    let mut seen = Vec::new();
+    for range in offered {
+        let found = SupportedFormat {
+            channels: range.channels(),
+            min_sample_rate: range.min_sample_rate(),
+            max_sample_rate: range.max_sample_rate(),
+            sample_type: sample_type_of(range.sample_format()),
+        };
+        if found.covers(&wanted) {
+            return Ok(range.with_sample_rate(wanted.sample_rate));
+        }
+        seen.push(found);
+    }
+    Err(Error::DeviceFormat {
+        device,
+        got: format!(
+            "{} Hz, {} channels, {}",
+            wanted.sample_rate, wanted.channels, wanted.sample_type
+        ),
+        offered: crate::describe_offered(&seen),
+    })
+}
+
 /// Gather what a device offers, in the terms this library speaks. Two
 /// device formats can land on one entry, so the same one is kept once.
 fn collect_formats(
@@ -363,9 +394,17 @@ fn wait_for_start(started: Receiver<Started>, device: Device) -> Result<()> {
 impl AudioBackend for CpalBackend {
     fn open_input(&mut self, req: &FormatRequest) -> Result<Box<dyn InputStream>> {
         let device = self.pick_input(req.device.as_deref())?;
-        let supported = device
-            .default_input_config()
-            .map_err(|e| classify(Device::Input, &e.to_string()))?;
+        let supported = match req.wanted {
+            Some(wanted) => {
+                let offered = device
+                    .supported_input_configs()
+                    .map_err(|e| classify(Device::Input, &e.to_string()))?;
+                pick_config(offered, wanted, Device::Input)?
+            }
+            None => device
+                .default_input_config()
+                .map_err(|e| classify(Device::Input, &e.to_string()))?,
+        };
         let format = to_audio_format(&supported)?;
         let sample_format = supported.sample_format();
         let config: StreamConfig = supported.into();
@@ -432,9 +471,17 @@ impl AudioBackend for CpalBackend {
 
     fn open_output(&mut self, req: &FormatRequest) -> Result<Box<dyn OutputStream>> {
         let device = self.pick_output(req.device.as_deref())?;
-        let supported = device
-            .default_output_config()
-            .map_err(|e| classify(Device::Output, &e.to_string()))?;
+        let supported = match req.wanted {
+            Some(wanted) => {
+                let offered = device
+                    .supported_output_configs()
+                    .map_err(|e| classify(Device::Output, &e.to_string()))?;
+                pick_config(offered, wanted, Device::Output)?
+            }
+            None => device
+                .default_output_config()
+                .map_err(|e| classify(Device::Output, &e.to_string()))?,
+        };
         let format = to_audio_format(&supported)?;
         let sample_format = supported.sample_format();
         let config: StreamConfig = supported.into();
@@ -681,7 +728,7 @@ mod tests {
         let mut input = backend
             .open_input(&FormatRequest {
                 device: None,
-                preferred: AudioFormat::mono_16k(),
+                wanted: None,
             })
             .expect("open the default microphone");
 
