@@ -9,7 +9,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Sample, SampleFormat, StreamConfig, SupportedStreamConfig};
+use cpal::{FromSample, Sample, SampleFormat, SizedSample, StreamConfig, SupportedStreamConfig};
 
 use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
 use crate::capture::Samples;
@@ -268,60 +268,84 @@ fn data_to_samples(data: &cpal::Data, format: SampleFormat) -> Samples {
     }
 }
 
-fn fill_from_samples(data: &mut cpal::Data, format: SampleFormat, queue: &Ring<Samples>) {
-    let wanted = data.len();
+/// Hands queued audio to the device. What does not fit in one buffer
+/// is kept for the next rather than going with the block it came in.
+struct Drain {
+    queue: Arc<Ring<Samples>>,
+    /// The block being handed over, and how far into it we are.
+    held: Option<(Samples, usize)>,
+}
+
+impl Drain {
+    fn new(queue: Arc<Ring<Samples>>) -> Self {
+        Self { queue, held: None }
+    }
+
+    /// Fill one device buffer, with silence wherever the queue ran dry.
+    fn fill<T>(&mut self, out: &mut [T])
+    where
+        T: Sample + FromSample<i16> + FromSample<f32>,
+    {
+        let mut written = 0;
+        while written < out.len() {
+            if self.held.is_none() {
+                self.held = self.queue.try_take().map(|taken| (taken.item, 0));
+            }
+            let Some((block, at)) = self.held.as_mut() else {
+                break;
+            };
+            let took = match block {
+                Samples::I16(v) => convert(&v[*at..], &mut out[written..]),
+                Samples::F32(v) => convert(&v[*at..], &mut out[written..]),
+            };
+            *at += took;
+            written += took;
+            if *at >= block.len() {
+                self.held = None;
+            }
+        }
+        out[written..].fill(T::EQUILIBRIUM);
+    }
+}
+
+/// As many samples as both sides have room for, in the device's own
+/// spelling. Returns how many crossed.
+fn convert<S, T>(from: &[S], to: &mut [T]) -> usize
+where
+    S: Sample,
+    T: Sample + FromSample<S>,
+{
+    let crossing = from.len().min(to.len());
+    for (slot, sample) in to.iter_mut().zip(from) {
+        *slot = sample.to_sample::<T>();
+    }
+    crossing
+}
+
+/// A device takes whichever spelling it was opened with, and this
+/// library speaks all of the ones cpal names.
+fn fill_from_samples(data: &mut cpal::Data, format: SampleFormat, drain: &mut Drain) {
+    fn hand<T: SizedSample + FromSample<i16> + FromSample<f32>>(
+        data: &mut cpal::Data,
+        drain: &mut Drain,
+    ) {
+        drain.fill(data.as_slice_mut::<T>().unwrap_or(&mut []));
+    }
+
     match format {
-        SampleFormat::I16 => {
-            let out = data.as_slice_mut::<i16>().unwrap_or(&mut []);
-            out.fill(0);
-            fill_i16(out, wanted, queue);
-        }
-        SampleFormat::F32 => {
-            let out = data.as_slice_mut::<f32>().unwrap_or(&mut []);
-            out.fill(0.0);
-            fill_f32(out, wanted, queue);
-        }
+        SampleFormat::I8 => hand::<i8>(data, drain),
+        SampleFormat::I16 => hand::<i16>(data, drain),
+        SampleFormat::I24 => hand::<cpal::I24>(data, drain),
+        SampleFormat::I32 => hand::<i32>(data, drain),
+        SampleFormat::I64 => hand::<i64>(data, drain),
+        SampleFormat::U8 => hand::<u8>(data, drain),
+        SampleFormat::U16 => hand::<u16>(data, drain),
+        SampleFormat::U24 => hand::<cpal::U24>(data, drain),
+        SampleFormat::U32 => hand::<u32>(data, drain),
+        SampleFormat::U64 => hand::<u64>(data, drain),
+        SampleFormat::F32 => hand::<f32>(data, drain),
+        SampleFormat::F64 => hand::<f64>(data, drain),
         _ => {}
-    }
-}
-
-fn fill_i16(out: &mut [i16], wanted: usize, queue: &Ring<Samples>) {
-    let mut written = 0;
-    while written < wanted {
-        let Some(taken) = queue.try_take() else { break };
-        match taken.item {
-            Samples::I16(v) => {
-                let n = v.len().min(wanted - written);
-                out[written..written + n].copy_from_slice(&v[..n]);
-                written += n;
-            }
-            Samples::F32(v) => {
-                for s in v.iter().take(wanted - written) {
-                    out[written] = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
-                    written += 1;
-                }
-            }
-        }
-    }
-}
-
-fn fill_f32(out: &mut [f32], wanted: usize, queue: &Ring<Samples>) {
-    let mut written = 0;
-    while written < wanted {
-        let Some(taken) = queue.try_take() else { break };
-        match taken.item {
-            Samples::F32(v) => {
-                let n = v.len().min(wanted - written);
-                out[written..written + n].copy_from_slice(&v[..n]);
-                written += n;
-            }
-            Samples::I16(v) => {
-                for s in v.iter().take(wanted - written) {
-                    out[written] = *s as f32 / 32768.0;
-                    written += 1;
-                }
-            }
-        }
     }
 }
 
@@ -425,14 +449,14 @@ impl AudioBackend for CpalBackend {
             thread::Builder::new()
                 .name("edge-ear-cpal-out".to_string())
                 .spawn(move || {
-                    let drain = Arc::clone(&queue);
+                    let mut drain = Drain::new(Arc::clone(&queue));
                     let built = device.build_output_stream_raw(
                         config,
                         sample_format,
                         move |data, _| {
                             // Silence when there is nothing queued, so a
                             // gap sounds like a gap rather than a click.
-                            fill_from_samples(data, sample_format, &drain);
+                            fill_from_samples(data, sample_format, &mut drain);
                         },
                         |_err| {},
                         None,
@@ -554,6 +578,62 @@ pub fn block_duration(format: AudioFormat, samples: usize) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn queued(block: Samples) -> Drain {
+        let queue = Arc::new(Ring::new(4));
+        queue.push(block);
+        Drain::new(queue)
+    }
+
+    /// A block larger than one device buffer used to go out with what
+    /// did not fit still inside it.
+    #[test]
+    fn what_did_not_fit_is_handed_over_next_time() {
+        let mut drain = queued(Samples::I16((0..512).map(|n| n as i16).collect()));
+
+        let mut first = [0i16; 256];
+        drain.fill(&mut first);
+        let mut second = [0i16; 256];
+        drain.fill(&mut second);
+
+        assert_eq!(first[0], 0, "the first buffer starts at the beginning");
+        assert_eq!(second[0], 256, "the rest of the block follows it");
+        assert_eq!(second[255], 511, "right to the end of it");
+    }
+
+    /// A speaker that speaks neither 16-bit nor float used to be handed
+    /// nothing at all.
+    #[test]
+    fn a_speaker_of_any_spelling_is_handed_audio() {
+        for format in [
+            SampleFormat::I8,
+            SampleFormat::I16,
+            SampleFormat::I32,
+            SampleFormat::I64,
+            SampleFormat::U8,
+            SampleFormat::U16,
+            SampleFormat::F32,
+            SampleFormat::F64,
+        ] {
+            let mut drain = queued(Samples::I16(vec![16_000; 8]));
+            let mut room = vec![0u8; 8 * format.sample_size()];
+            // Safe: the buffer is this library's own and long enough.
+            let mut data = unsafe { cpal::Data::from_parts(room.as_mut_ptr().cast(), 8, format) };
+            fill_from_samples(&mut data, format, &mut drain);
+            assert!(
+                room.iter().any(|b| *b != 0),
+                "{format:?} was handed silence"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dry_queue_is_silence_and_not_the_last_thing_played() {
+        let mut drain = Drain::new(Arc::new(Ring::new(4)));
+        let mut out = [1234i16; 8];
+        drain.fill(&mut out);
+        assert!(out.iter().all(|s| *s == 0));
+    }
 
     #[test]
     fn permission_wording_becomes_its_own_error() {
