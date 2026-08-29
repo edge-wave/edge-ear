@@ -96,6 +96,27 @@ def test_a_device_says_what_it_will_take():
             assert "Hz" in repr(formats[0])
 
 
+def test_a_device_format_is_taken_or_refused_by_name():
+    with edge_ear.EdgeEar() as ear:
+        offered = ear.input_device_formats()[0]
+        ear.set_input_device_format(
+            sample_rate=offered.min_sample_rate,
+            channels=offered.channels,
+            sample_type=offered.sample_type,
+        )
+        assert ear.input_format is None          # 아직 안 열렸다
+        ear.start()
+        opened = ear.input_format
+        assert opened.min_sample_rate == offered.min_sample_rate
+        assert opened.min_sample_rate == opened.max_sample_rate
+        ear.stop()
+
+        ear.set_input_device_format()             # 인자 없이 = 장치가 고른다
+        with pytest.raises(edge_ear.UnsupportedFormat) as caught:
+            ear.set_input_device_format(sample_rate=12345, channels=7)
+        assert "offers" in str(caught.value)      # 무엇을 받는지 말해준다
+
+
 def test_settings_are_refused_while_a_recording_is_open():
     with edge_ear.EdgeEar() as ear:
         ear.set_no_speech_timeout(30.0)

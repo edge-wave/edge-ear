@@ -89,6 +89,16 @@ int main(void)
     CHECK(edge_ear_input_device_formats(ear, NULL, NULL, &formats_count)
               == EDGE_EAR_NULL_ARGUMENT, "null formats out");
 
+    edge_ear_format opened;
+    CHECK(edge_ear_input_format(ear, &opened) == EDGE_EAR_NOT_RUNNING,
+          "no microphone format before capture starts");
+    CHECK(edge_ear_output_format(ear, &opened) == EDGE_EAR_NOT_RUNNING,
+          "no speaker format before a sound opens it");
+    CHECK(edge_ear_set_input_device_format(ear, 0, 1, EDGE_EAR_SAMPLE_TYPE_I16)
+              == EDGE_EAR_OK, "zero rate means the device chooses");
+    CHECK(edge_ear_set_input_device_format(ear, 12345, 7, EDGE_EAR_SAMPLE_TYPE_I16)
+              == EDGE_EAR_UNSUPPORTED_FORMAT, "a format no device offers");
+
     CHECK(edge_ear_set_input_device(ear, "nothing::here") == EDGE_EAR_OK,
           "an unknown name is accepted");
     CHECK(edge_ear_start(ear) == EDGE_EAR_NO_DEVICE, "and refused at start");

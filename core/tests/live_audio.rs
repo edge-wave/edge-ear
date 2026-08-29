@@ -359,3 +359,36 @@ fn the_default_microphone_is_opened_at_something_it_offered() {
     println!("read as {:?}, device offered {offered:?}", chunk.format);
     assert!(!offered.is_empty());
 }
+
+/// A device opens at what it was asked for, when it said it would take
+/// it, and says why when it would not.
+#[test]
+#[ignore]
+fn a_real_device_opens_at_what_was_asked_for() {
+    let ear = EdgeEar::new().expect("handle over the real devices");
+    let offered = ear.input_device_formats(None).expect("formats");
+    let wanted = AudioFormat::new(
+        offered[0].min_sample_rate,
+        offered[0].channels,
+        offered[0].sample_type,
+    );
+
+    ear.set_input_device_format(Some(wanted))
+        .expect("a format the device listed");
+    assert!(ear.input_format().is_none(), "nothing is open yet");
+
+    ear.start().expect("start");
+    assert_eq!(
+        ear.input_format(),
+        Some(wanted),
+        "the microphone opened at something else"
+    );
+    ear.stop().unwrap();
+
+    // Nothing offers seven channels at 12345 Hz.
+    let err = ear
+        .set_input_device_format(Some(AudioFormat::new(12_345, 7, SampleType::I16)))
+        .expect_err("must be refused");
+    println!("{err}");
+    assert!(err.to_string().contains("offers"), "{err}");
+}
