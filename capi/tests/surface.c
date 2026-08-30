@@ -11,7 +11,7 @@ static int failures = 0;
 #define CHECK(cond, what)                                             \
     do {                                                              \
         if (!(cond)) {                                                \
-            printf("  FAIL %s: %s\n", (what), edge_ear_last_error()); \
+            printf("  FAIL %s: %s\n", (what), edge_ear_get_last_error()); \
             failures++;                                               \
         }                                                             \
     } while (0)
@@ -69,30 +69,30 @@ int main(void)
 
     const edge_ear_device *devices;
     size_t count = 0;
-    CHECK(edge_ear_input_devices(ear, &devices, &count) == EDGE_EAR_OK, "input devices");
+    CHECK(edge_ear_get_input_devices(ear, &devices, &count) == EDGE_EAR_OK, "input devices");
     CHECK(count > 0, "at least one microphone");
     CHECK(devices[0].id != NULL && devices[0].name != NULL, "device strings");
-    CHECK(edge_ear_output_devices(ear, &devices, &count) == EDGE_EAR_OK, "output devices");
+    CHECK(edge_ear_get_output_devices(ear, &devices, &count) == EDGE_EAR_OK, "output devices");
     /* A name is taken as given and checked when capture starts, which
      * is what the Rust side does and what its tests pin down. */
     const edge_ear_format *formats;
     size_t formats_count = 0;
-    CHECK(edge_ear_input_device_formats(ear, NULL, &formats, &formats_count)
+    CHECK(edge_ear_get_input_device_formats(ear, NULL, &formats, &formats_count)
               == EDGE_EAR_OK, "input formats");
     CHECK(formats_count > 0, "the default microphone offered something");
     CHECK(formats[0].channels > 0, "a format names its channels");
     CHECK(formats[0].min_sample_rate <= formats[0].max_sample_rate,
           "a format's span runs the right way");
-    CHECK(edge_ear_output_device_formats(ear, NULL, &formats, &formats_count)
+    CHECK(edge_ear_get_output_device_formats(ear, NULL, &formats, &formats_count)
               == EDGE_EAR_OK, "output formats");
     CHECK(formats_count > 0, "the default speaker offered something");
-    CHECK(edge_ear_input_device_formats(ear, NULL, NULL, &formats_count)
+    CHECK(edge_ear_get_input_device_formats(ear, NULL, NULL, &formats_count)
               == EDGE_EAR_NULL_ARGUMENT, "null formats out");
 
     edge_ear_format opened;
-    CHECK(edge_ear_input_format(ear, &opened) == EDGE_EAR_NOT_RUNNING,
+    CHECK(edge_ear_get_input_format(ear, &opened) == EDGE_EAR_NOT_RUNNING,
           "no microphone format before capture starts");
-    CHECK(edge_ear_output_format(ear, &opened) == EDGE_EAR_NOT_RUNNING,
+    CHECK(edge_ear_get_output_format(ear, &opened) == EDGE_EAR_NOT_RUNNING,
           "no speaker format before a sound opens it");
     CHECK(edge_ear_set_input_device_format(ear, 0, 1, EDGE_EAR_SAMPLE_TYPE_I16)
               == EDGE_EAR_OK, "zero rate means the device chooses");
@@ -117,9 +117,9 @@ int main(void)
     CHECK(edge_ear_unregister_sound(ear, "beep") == EDGE_EAR_OK, "unregister");
 
     float score = 0.0f;
-    CHECK(edge_ear_wake_score(ear, &score) == EDGE_EAR_NOT_RUNNING, "no score yet");
+    CHECK(edge_ear_get_wake_score(ear, &score) == EDGE_EAR_NOT_RUNNING, "no score yet");
     const char *alert = (const char *)1;
-    CHECK(edge_ear_wake_alert(ear, &alert) == EDGE_EAR_OK, "alert getter");
+    CHECK(edge_ear_get_wake_alert(ear, &alert) == EDGE_EAR_OK, "alert getter");
     CHECK(alert == NULL, "no alert named");
     CHECK(edge_ear_is_wake_enabled(ear) == 0, "wake off");
     CHECK(edge_ear_is_speech_enabled(ear) == 0, "speech off");

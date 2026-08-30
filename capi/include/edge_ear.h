@@ -7,7 +7,7 @@
  *     cbindgen --config capi/cbindgen.toml --crate edge-ear-capi *         --output capi/include/edge_ear.h
  *
  * Errors: every fallible call returns int. 0 is success, negative names
- * the failure, and edge_ear_last_error() describes the most recent one
+ * the failure, and edge_ear_get_last_error() describes the most recent one
  * on this thread.
  *
  * Memory: the caller owns everything it passes in, and the library
@@ -388,13 +388,13 @@ extern "C" {
  * @return The message, borrowed until the next call on this thread
  *         fails. Empty when nothing has failed yet.
  */
-const char *edge_ear_last_error(void);
+const char *edge_ear_get_last_error(void);
 
 /**
  * @brief Make a handle.
  *
  * @return The handle, or NULL when no device could be reached. On
- *         NULL, edge_ear_last_error() says why.
+ *         NULL, edge_ear_get_last_error() says why.
  * @see edge_ear_free
  */
 edge_ear_h edge_ear_new(void);
@@ -558,7 +558,7 @@ int32_t edge_ear_reset_wake(edge_ear_h ear);
  *         scored yet.
  * @see edge_ear_set_wake_threshold
  */
-int32_t edge_ear_wake_score(edge_ear_h ear, float *score);
+int32_t edge_ear_get_wake_score(edge_ear_h ear, float *score);
 
 /**
  * @brief The sound played on detection.
@@ -569,7 +569,7 @@ int32_t edge_ear_wake_score(edge_ear_h ear, float *score);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_enable_wake
  */
-int32_t edge_ear_wake_alert(edge_ear_h ear, const char **alert);
+int32_t edge_ear_get_wake_alert(edge_ear_h ear, const char **alert);
 
 /**
  * @brief How sure the detector must be before it says it heard.
@@ -577,7 +577,7 @@ int32_t edge_ear_wake_alert(edge_ear_h ear, const char **alert);
  * @param[in] ear the handle
  * @param[in] value from 0.0 to 1.0
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
- * @see edge_ear_wake_score
+ * @see edge_ear_get_wake_score
  */
 int32_t edge_ear_set_wake_threshold(edge_ear_h ear, float value);
 
@@ -833,7 +833,7 @@ int32_t edge_ear_is_playing(edge_ear_h ear);
  * @param[in] sample_type how one sample is written
  * @return #EDGE_EAR_OK, #EDGE_EAR_UNSUPPORTED_FORMAT when the device
  *         does not offer it, or another negative #edge_ear_error.
- * @see edge_ear_input_device_formats, edge_ear_input_format
+ * @see edge_ear_get_input_device_formats, edge_ear_get_input_format
  */
 int32_t edge_ear_set_input_device_format(edge_ear_h ear,
                                          uint32_t sample_rate,
@@ -854,7 +854,7 @@ int32_t edge_ear_set_input_device_format(edge_ear_h ear,
  * @return #EDGE_EAR_OK, #EDGE_EAR_UNSUPPORTED_FORMAT when the device
  *         does not offer it, #EDGE_EAR_RUNNING_NOT_ALLOWED once the
  *         speaker is open, or another negative #edge_ear_error.
- * @see edge_ear_output_device_formats, edge_ear_output_format
+ * @see edge_ear_get_output_device_formats, edge_ear_get_output_format
  */
 int32_t edge_ear_set_output_device_format(edge_ear_h ear,
                                           uint32_t sample_rate,
@@ -873,7 +873,7 @@ int32_t edge_ear_set_output_device_format(edge_ear_h ear,
  *         or another negative #edge_ear_error.
  * @see edge_ear_set_input_device_format
  */
-int32_t edge_ear_input_format(edge_ear_h ear, edge_ear_format *format);
+int32_t edge_ear_get_input_format(edge_ear_h ear, edge_ear_format *format);
 
 /**
  * @brief What the speaker opened at.
@@ -887,7 +887,7 @@ int32_t edge_ear_input_format(edge_ear_h ear, edge_ear_format *format);
  *         opens the speaker, or another negative #edge_ear_error.
  * @see edge_ear_set_output_device_format
  */
-int32_t edge_ear_output_format(edge_ear_h ear, edge_ear_format *format);
+int32_t edge_ear_get_output_format(edge_ear_h ear, edge_ear_format *format);
 
 /**
  * @brief What one microphone will take.
@@ -902,12 +902,12 @@ int32_t edge_ear_output_format(edge_ear_h ear, edge_ear_format *format);
  *             listing call on this handle
  * @param[out] count how many entries the list holds
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
- * @see edge_ear_input_devices, edge_ear_set_format
+ * @see edge_ear_get_input_devices, edge_ear_set_format
  */
-int32_t edge_ear_input_device_formats(edge_ear_h ear,
-                                      const char *device,
-                                      const edge_ear_format **formats,
-                                      uintptr_t *count);
+int32_t edge_ear_get_input_device_formats(edge_ear_h ear,
+                                          const char *device,
+                                          const edge_ear_format **formats,
+                                          uintptr_t *count);
 
 /**
  * @brief What one speaker will take.
@@ -921,12 +921,12 @@ int32_t edge_ear_input_device_formats(edge_ear_h ear,
  *             listing call on this handle
  * @param[out] count how many entries the list holds
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
- * @see edge_ear_output_devices, edge_ear_register_sound_pcm
+ * @see edge_ear_get_output_devices, edge_ear_register_sound_pcm
  */
-int32_t edge_ear_output_device_formats(edge_ear_h ear,
-                                       const char *device,
-                                       const edge_ear_format **formats,
-                                       uintptr_t *count);
+int32_t edge_ear_get_output_device_formats(edge_ear_h ear,
+                                           const char *device,
+                                           const edge_ear_format **formats,
+                                           uintptr_t *count);
 
 /**
  * @brief Every microphone the system offers.
@@ -938,7 +938,9 @@ int32_t edge_ear_output_device_formats(edge_ear_h ear,
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_set_input_device
  */
-int32_t edge_ear_input_devices(edge_ear_h ear, const edge_ear_device **devices, uintptr_t *count);
+int32_t edge_ear_get_input_devices(edge_ear_h ear,
+                                   const edge_ear_device **devices,
+                                   uintptr_t *count);
 
 /**
  * @brief Every speaker the system offers.
@@ -950,7 +952,9 @@ int32_t edge_ear_input_devices(edge_ear_h ear, const edge_ear_device **devices, 
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_set_output_device
  */
-int32_t edge_ear_output_devices(edge_ear_h ear, const edge_ear_device **devices, uintptr_t *count);
+int32_t edge_ear_get_output_devices(edge_ear_h ear,
+                                    const edge_ear_device **devices,
+                                    uintptr_t *count);
 
 /**
  * @brief Choose a microphone.
@@ -958,10 +962,10 @@ int32_t edge_ear_output_devices(edge_ear_h ear, const edge_ear_device **devices,
  * The name is taken as given and checked when capture starts.
  *
  * @param[in] ear the handle
- * @param[in] id an identifier from edge_ear_input_devices(), or NULL
+ * @param[in] id an identifier from edge_ear_get_input_devices(), or NULL
  *            for the system default
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
- * @see edge_ear_input_devices
+ * @see edge_ear_get_input_devices
  */
 int32_t edge_ear_set_input_device(edge_ear_h ear, const char *id);
 
@@ -971,10 +975,10 @@ int32_t edge_ear_set_input_device(edge_ear_h ear, const char *id);
  * The name is taken as given and checked when capture starts.
  *
  * @param[in] ear the handle
- * @param[in] id an identifier from edge_ear_output_devices(), or NULL
+ * @param[in] id an identifier from edge_ear_get_output_devices(), or NULL
  *            for the system default
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
- * @see edge_ear_output_devices
+ * @see edge_ear_get_output_devices
  */
 int32_t edge_ear_set_output_device(edge_ear_h ear, const char *id);
 
