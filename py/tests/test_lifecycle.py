@@ -117,7 +117,7 @@ def test_a_device_format_is_taken_or_refused_by_name():
         assert "offers" in str(caught.value)      # 무엇을 받는지 말해준다
 
 
-def test_settings_are_refused_while_a_recording_is_open():
+def test_the_rules_weighed_frame_by_frame_can_be_changed_mid_recording():
     with edge_ear.EdgeEar() as ear:
         ear.set_no_speech_timeout(30.0)
         ear.set_max_recording(60.0)
@@ -131,5 +131,15 @@ def test_settings_are_refused_while_a_recording_is_open():
             time.sleep(0.005)
         assert ear.is_recording
 
+        # Weighed every frame, so changing one mid-recording reaches it.
+        # Moving a slider needs no recording stopped and reopened.
+        ear.set_silence_duration(0.1)
+        ear.set_speech_threshold(0.9)
+        ear.set_max_recording(5.0)
+        ear.set_no_speech_timeout(5.0)
+        assert ear.is_recording
+
+        # The exception: an open recording cannot reach further back,
+        # so this is refused rather than quietly ignored.
         with pytest.raises(edge_ear.RecordingOpen):
-            ear.set_silence_duration(0.1)
+            ear.set_pre_roll(0.2)

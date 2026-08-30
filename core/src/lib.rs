@@ -690,36 +690,28 @@ impl EdgeEar {
         Ok(())
     }
 
-    /// How readily audio counts as speech. These next five shape a
-    /// recording, which follows the rules it opened with, so changing
-    /// one while a recording is open is refused rather than ignored.
+    /// How readily audio counts as speech. These next four are weighed
+    /// frame by frame, so a new value reaches an open recording too.
     pub fn set_speech_threshold(&self, value: f32) -> Result<()> {
-        self.tune_recording("the speech threshold", |c| {
-            c.tunable.speech_threshold = value
-        })
+        self.tune(|c| c.tunable.speech_threshold = value)
     }
 
     /// How long the speaker must be quiet before a recording ends.
+    /// Shortened below the quiet already gathered, it ends at once.
     pub fn set_silence_duration(&self, value: std::time::Duration) -> Result<()> {
-        self.tune_recording("the silence duration", |c| {
-            c.tunable.silence_duration = value
-        })
+        self.tune(|c| c.tunable.silence_duration = value)
     }
 
-    /// The longest a recording may run before it is handed over
-    /// regardless of what the speaker is doing.
+    /// The longest a recording may run, whatever the speaker is doing.
+    /// Shortened below what an open one has run, it is handed over now.
     pub fn set_max_recording(&self, value: std::time::Duration) -> Result<()> {
-        self.tune_recording("the maximum recording length", |c| {
-            c.tunable.max_recording = value
-        })
+        self.tune(|c| c.tunable.max_recording = value)
     }
 
     /// How long to wait for anyone to speak at all before giving up
     /// on a recording.
     pub fn set_no_speech_timeout(&self, value: std::time::Duration) -> Result<()> {
-        self.tune_recording("the no-speech timeout", |c| {
-            c.tunable.no_speech_timeout = value
-        })
+        self.tune(|c| c.tunable.no_speech_timeout = value)
     }
 
     /// How much audio from before the recording opened to include, so
@@ -766,8 +758,8 @@ impl EdgeEar {
             .is_some_and(|s| s.is_recording())
     }
 
-    /// Change a setting a recording follows. Refused while one is open,
-    /// because it could not affect the recording already running.
+    /// Change a setting read only as a recording opens. Refused while
+    /// one is open, because a new value could not reach it.
     fn tune_recording(&self, what: &'static str, apply: impl FnOnce(&mut Config)) -> Result<()> {
         if self.is_recording() {
             return Err(Error::RecordingOpen { what });

@@ -474,8 +474,8 @@ pub unsafe extern "C" fn edge_ear_is_recording(ear: *mut edge_ear_h) -> i32 {
 ///
 /// @param[in] ear the handle
 /// @param[in] value from 0.0 to 1.0
-/// @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
-///         open, or another negative #edge_ear_error.
+/// @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
+///         next frame, so an open recording follows the new value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_speech_threshold(ear: *mut edge_ear_h, value: f32) -> i32 {
     with!(ear, e => report(e.core.set_speech_threshold(value)))
@@ -485,8 +485,8 @@ pub unsafe extern "C" fn edge_ear_set_speech_threshold(ear: *mut edge_ear_h, val
 ///
 /// @param[in] ear the handle
 /// @param[in] seconds greater than zero
-/// @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
-///         open, or another negative #edge_ear_error.
+/// @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
+///         next frame, so an open recording follows the new value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_silence_duration(ear: *mut edge_ear_h, seconds: f64) -> i32 {
     with!(ear, e => {
@@ -499,8 +499,8 @@ pub unsafe extern "C" fn edge_ear_set_silence_duration(ear: *mut edge_ear_h, sec
 ///
 /// @param[in] ear the handle
 /// @param[in] seconds greater than the silence duration
-/// @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
-///         open, or another negative #edge_ear_error.
+/// @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
+///         next frame, so an open recording follows the new value.
 /// @see edge_ear_set_silence_duration
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_max_recording(ear: *mut edge_ear_h, seconds: f64) -> i32 {
@@ -514,8 +514,8 @@ pub unsafe extern "C" fn edge_ear_set_max_recording(ear: *mut edge_ear_h, second
 ///
 /// @param[in] ear the handle
 /// @param[in] seconds greater than zero
-/// @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
-///         open, or another negative #edge_ear_error.
+/// @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
+///         next frame, so an open recording follows the new value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_no_speech_timeout(ear: *mut edge_ear_h, seconds: f64) -> i32 {
     with!(ear, e => {
