@@ -221,14 +221,14 @@ dependencies = [
 
 [[package]]
 name = "edge-ear-capi"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "edge-ear-core",
 ]
 
 [[package]]
 name = "edge-ear-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cpal",
  "log",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "edge-ear-py"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "edge-ear-core",
  "pyo3",
