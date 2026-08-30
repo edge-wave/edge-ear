@@ -31,7 +31,7 @@ static void on_event(const edge_ear_event *event, void *user)
 
 int main(int argc, char **argv)
 {
-    edge_ear_h *ear = edge_ear_new();
+    edge_ear_h ear = edge_ear_new();
     if (!ear) {
         fprintf(stderr, "could not open a device: %s\n", edge_ear_last_error());
         return 1;
