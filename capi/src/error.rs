@@ -19,8 +19,8 @@ pub enum edge_ear_error {
     EDGE_EAR_ALREADY_RUNNING = -2,
     /// Can only be set before capture starts.
     EDGE_EAR_RUNNING_NOT_ALLOWED = -3,
-    /// Refused while a recording is open, because a recording
-    /// follows the rules it opened with.
+    /// Refused while a recording is open, because it took this value
+    /// as it opened and a new one cannot reach it.
     EDGE_EAR_RECORDING_OPEN = -4,
     /// The handle has been freed.
     EDGE_EAR_DESTROYED = -5,

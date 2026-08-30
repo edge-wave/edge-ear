@@ -198,7 +198,7 @@ fn recording_settings_can_be_changed_between_recordings() {
 }
 
 #[test]
-fn changing_the_rules_mid_recording_is_refused_rather_than_ignored() {
+fn the_rules_weighed_frame_by_frame_can_be_changed_mid_recording() {
     // Nothing arrives, so the recording stays open until told otherwise.
     let ear = EdgeEar::with_backend(Box::new(FakeBackend::starving())).expect("handle");
     ear.enable_speech().unwrap();
@@ -212,35 +212,78 @@ fn changing_the_rules_mid_recording_is_refused_rather_than_ignored() {
     }
     assert!(ear.is_recording(), "a recording should be open");
 
-    for result in [
-        ear.set_silence_duration(Duration::from_millis(100)),
-        ear.set_max_recording(Duration::from_secs(5)),
-        ear.set_no_speech_timeout(Duration::from_secs(5)),
-        ear.set_speech_threshold(0.9),
-        ear.set_pre_roll(Duration::from_millis(200)),
-    ] {
-        let err = result.expect_err("must be refused while a recording is open");
-        assert!(matches!(err, Error::RecordingOpen { .. }), "{err}");
-        assert!(
-            err.to_string().contains("while a recording is open"),
-            "{err}"
-        );
-    }
+    // Weighed every frame, so a new value has somewhere to land.
+    ear.set_silence_duration(Duration::from_millis(100))
+        .expect("the silence duration mid-recording");
+    ear.set_max_recording(Duration::from_secs(5))
+        .expect("the maximum length mid-recording");
+    ear.set_no_speech_timeout(Duration::from_secs(5))
+        .expect("the no-speech timeout mid-recording");
+    ear.set_speech_threshold(0.9)
+        .expect("the speech threshold mid-recording");
 
-    // The old value is untouched, since nothing was applied.
     assert_eq!(
         ear.config().tunable.speech_threshold,
-        0.5,
+        0.9,
+        "the new value should be the one in force"
+    );
+    assert!(ear.is_recording(), "the recording should still be open");
+
+    // The exception: an open recording reached back as far as it ever
+    // will, so a new value could not affect it.
+    let err = ear
+        .set_pre_roll(Duration::from_millis(200))
+        .expect_err("must be refused while a recording is open");
+    assert!(matches!(err, Error::RecordingOpen { .. }), "{err}");
+    assert!(
+        err.to_string().contains("while a recording is open"),
+        "{err}"
+    );
+    assert_eq!(
+        ear.config().tunable.pre_roll,
+        Duration::ZERO,
         "a refused change must leave the setting alone"
     );
 
-    // Once the recording ends, the same calls work.
+    // Once the recording ends, the pre-roll can be set too.
     ear.stop_recording().unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
     while ear.is_recording() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(5));
     }
-    ear.set_silence_duration(Duration::from_millis(100))
-        .unwrap();
+    ear.set_pre_roll(Duration::from_millis(200)).unwrap();
+    ear.stop().unwrap();
+}
+
+/// Taking the value is not the same as acting on it: this shortens a
+/// timeout the open recording has run past, and it has to end on it.
+#[test]
+fn a_timeout_shortened_mid_recording_ends_the_open_recording() {
+    let ear = ear();
+    let seen = endings(&ear);
+    // Long enough that nothing ends on its own while this test sets up.
+    ear.set_no_speech_timeout(Duration::from_secs(30)).unwrap();
+    ear.enable_speech().unwrap();
+    ear.start().unwrap();
+    ear.start_recording().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !ear.is_recording() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(ear.is_recording(), "a recording should be open");
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "nothing should have ended yet"
+    );
+
+    ear.set_no_speech_timeout(Duration::from_millis(200))
+        .expect("shortening the timeout mid-recording");
+
+    assert!(
+        wait_for(&seen, 1),
+        "the shortened timeout was never acted on"
+    );
+    assert_eq!(seen.lock().unwrap()[0].0, EndReason::NoSpeech);
     ear.stop().unwrap();
 }

@@ -140,16 +140,12 @@ fn the_settings_fixed_at_start_refuse_once_capture_is_running() {
 }
 
 #[test]
-fn the_settings_a_recording_follows_refuse_while_one_is_open() {
-    let followed_by_a_recording = [
-        "set_speech_threshold",
-        "set_silence_duration",
-        "set_max_recording",
-        "set_no_speech_timeout",
-        "set_pre_roll",
-    ];
+fn the_settings_read_only_as_a_recording_opens_refuse_while_one_is_open() {
+    // An open recording has already taken all the pre-roll it ever
+    // will. The ones weighed frame by frame are in end_of_speech.
+    let read_only_as_it_opens = ["set_pre_roll"];
     for entry in every_entry_point() {
-        if !followed_by_a_recording.contains(&entry.name) {
+        if !read_only_as_it_opens.contains(&entry.name) {
             continue;
         }
         // Nothing arrives, so the recording stays open.

@@ -187,8 +187,8 @@ enum edge_ear_error
      */
     EDGE_EAR_RUNNING_NOT_ALLOWED = -3,
     /**
-     * Refused while a recording is open, because a recording
-     * follows the rules it opened with.
+     * Refused while a recording is open, because it took this value
+     * as it opened and a new one cannot reach it.
      */
     EDGE_EAR_RECORDING_OPEN = -4,
     /**
@@ -658,8 +658,8 @@ int32_t edge_ear_is_recording(edge_ear_h *ear);
  *
  * @param[in] ear the handle
  * @param[in] value from 0.0 to 1.0
- * @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
- *         open, or another negative #edge_ear_error.
+ * @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
+ *         next frame, so an open recording follows the new value.
  */
 int32_t edge_ear_set_speech_threshold(edge_ear_h *ear, float value);
 
@@ -668,8 +668,8 @@ int32_t edge_ear_set_speech_threshold(edge_ear_h *ear, float value);
  *
  * @param[in] ear the handle
  * @param[in] seconds greater than zero
- * @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
- *         open, or another negative #edge_ear_error.
+ * @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
+ *         next frame, so an open recording follows the new value.
  */
 int32_t edge_ear_set_silence_duration(edge_ear_h *ear, double seconds);
 
@@ -678,8 +678,8 @@ int32_t edge_ear_set_silence_duration(edge_ear_h *ear, double seconds);
  *
  * @param[in] ear the handle
  * @param[in] seconds greater than the silence duration
- * @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
- *         open, or another negative #edge_ear_error.
+ * @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
+ *         next frame, so an open recording follows the new value.
  * @see edge_ear_set_silence_duration
  */
 int32_t edge_ear_set_max_recording(edge_ear_h *ear, double seconds);
@@ -689,8 +689,8 @@ int32_t edge_ear_set_max_recording(edge_ear_h *ear, double seconds);
  *
  * @param[in] ear the handle
  * @param[in] seconds greater than zero
- * @return #EDGE_EAR_OK, #EDGE_EAR_RECORDING_OPEN while a recording is
- *         open, or another negative #edge_ear_error.
+ * @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
+ *         next frame, so an open recording follows the new value.
  */
 int32_t edge_ear_set_no_speech_timeout(edge_ear_h *ear, double seconds);
 
