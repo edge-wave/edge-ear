@@ -270,10 +270,15 @@ typedef int32_t edge_ear_error;
 #endif // __cplusplus
 
 /**
- * The handle a C caller holds. Opaque on that side, and named the way
- * C wants to read it rather than the way Rust would spell it.
+ * What a handle points to. Opaque on the C side, which only ever
+ * names the pointer to this: `edge_ear_h`.
  */
-typedef struct edge_ear_h edge_ear_h;
+typedef struct edge_ear_handle edge_ear_handle;
+
+/**
+ * The handle a C caller holds.
+ */
+typedef edge_ear_handle *edge_ear_h;
 
 /**
  * One notification, as C sees it. Every pointer borrows from the call
@@ -392,7 +397,7 @@ const char *edge_ear_last_error(void);
  *         NULL, edge_ear_last_error() says why.
  * @see edge_ear_free
  */
-edge_ear_h *edge_ear_new(void);
+edge_ear_h edge_ear_new(void);
 
 /**
  * @brief Release the handle and everything it owns.
@@ -403,7 +408,7 @@ edge_ear_h *edge_ear_new(void);
  * @param[in] ear the handle, or NULL to do nothing
  * @see edge_ear_new
  */
-void edge_ear_free(edge_ear_h *ear);
+void edge_ear_free(edge_ear_h ear);
 
 /**
  * @brief Open the microphone and begin reading.
@@ -414,7 +419,7 @@ void edge_ear_free(edge_ear_h *ear);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_stop, edge_ear_read
  */
-int32_t edge_ear_start(edge_ear_h *ear);
+int32_t edge_ear_start(edge_ear_h ear);
 
 /**
  * @brief Release the microphone and the speaker.
@@ -425,7 +430,7 @@ int32_t edge_ear_start(edge_ear_h *ear);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_start
  */
-int32_t edge_ear_stop(edge_ear_h *ear);
+int32_t edge_ear_stop(edge_ear_h ear);
 
 /**
  * @brief Whether capture is running.
@@ -435,7 +440,7 @@ int32_t edge_ear_stop(edge_ear_h *ear);
  *         null handle.
  * @see edge_ear_start
  */
-int32_t edge_ear_is_running(edge_ear_h *ear);
+int32_t edge_ear_is_running(edge_ear_h ear);
 
 /**
  * @brief Take the next block of live audio.
@@ -452,7 +457,7 @@ int32_t edge_ear_is_running(edge_ear_h *ear);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_set_format
  */
-int32_t edge_ear_read(edge_ear_h *ear,
+int32_t edge_ear_read(edge_ear_h ear,
                       int16_t *buf,
                       uintptr_t cap,
                       int32_t timeout_ms,
@@ -470,7 +475,7 @@ int32_t edge_ear_read(edge_ear_h *ear,
  *            alive until the handle is freed
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  */
-int32_t edge_ear_on_event(edge_ear_h *ear, edge_ear_event_cb callback, void *user);
+int32_t edge_ear_on_event(edge_ear_h ear, edge_ear_event_cb callback, void *user);
 
 /**
  * @brief Supply the two models every wake word shares.
@@ -483,7 +488,7 @@ int32_t edge_ear_on_event(edge_ear_h *ear, edge_ear_event_cb callback, void *use
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_load_wake_model
  */
-int32_t edge_ear_load_wake_features(edge_ear_h *ear, const char *spectrogram, const char *features);
+int32_t edge_ear_load_wake_features(edge_ear_h ear, const char *spectrogram, const char *features);
 
 /**
  * @brief Supply the model for the phrase to listen for.
@@ -496,7 +501,7 @@ int32_t edge_ear_load_wake_features(edge_ear_h *ear, const char *spectrogram, co
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_load_wake_features, edge_ear_enable_wake
  */
-int32_t edge_ear_load_wake_model(edge_ear_h *ear, const char *path);
+int32_t edge_ear_load_wake_model(edge_ear_h ear, const char *path);
 
 /**
  * @brief Start listening for the wake word.
@@ -508,7 +513,7 @@ int32_t edge_ear_load_wake_model(edge_ear_h *ear, const char *path);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_disable_wake, edge_ear_register_sound_file
  */
-int32_t edge_ear_enable_wake(edge_ear_h *ear, const char *alert);
+int32_t edge_ear_enable_wake(edge_ear_h ear, const char *alert);
 
 /**
  * @brief Stop listening for the wake word.
@@ -519,7 +524,7 @@ int32_t edge_ear_enable_wake(edge_ear_h *ear, const char *alert);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_enable_wake
  */
-int32_t edge_ear_disable_wake(edge_ear_h *ear);
+int32_t edge_ear_disable_wake(edge_ear_h ear);
 
 /**
  * @brief Whether the wake word is being listened for.
@@ -528,7 +533,7 @@ int32_t edge_ear_disable_wake(edge_ear_h *ear);
  * @return 1 when listening, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
  *         null handle.
  */
-int32_t edge_ear_is_wake_enabled(edge_ear_h *ear);
+int32_t edge_ear_is_wake_enabled(edge_ear_h ear);
 
 /**
  * @brief Clear what the detector has heard and look away.
@@ -539,7 +544,7 @@ int32_t edge_ear_is_wake_enabled(edge_ear_h *ear);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_set_wake_settle_frames
  */
-int32_t edge_ear_reset_wake(edge_ear_h *ear);
+int32_t edge_ear_reset_wake(edge_ear_h ear);
 
 /**
  * @brief How sure the detector was, most recently.
@@ -553,7 +558,7 @@ int32_t edge_ear_reset_wake(edge_ear_h *ear);
  *         scored yet.
  * @see edge_ear_set_wake_threshold
  */
-int32_t edge_ear_wake_score(edge_ear_h *ear, float *score);
+int32_t edge_ear_wake_score(edge_ear_h ear, float *score);
 
 /**
  * @brief The sound played on detection.
@@ -564,7 +569,7 @@ int32_t edge_ear_wake_score(edge_ear_h *ear, float *score);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_enable_wake
  */
-int32_t edge_ear_wake_alert(edge_ear_h *ear, const char **alert);
+int32_t edge_ear_wake_alert(edge_ear_h ear, const char **alert);
 
 /**
  * @brief How sure the detector must be before it says it heard.
@@ -574,7 +579,7 @@ int32_t edge_ear_wake_alert(edge_ear_h *ear, const char **alert);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_wake_score
  */
-int32_t edge_ear_set_wake_threshold(edge_ear_h *ear, float value);
+int32_t edge_ear_set_wake_threshold(edge_ear_h ear, float value);
 
 /**
  * @brief How long to look away after hearing the word.
@@ -587,7 +592,7 @@ int32_t edge_ear_set_wake_threshold(edge_ear_h *ear, float value);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_reset_wake
  */
-int32_t edge_ear_set_wake_settle_frames(edge_ear_h *ear, uint32_t frames);
+int32_t edge_ear_set_wake_settle_frames(edge_ear_h ear, uint32_t frames);
 
 /**
  * @brief Start watching for the end of speech.
@@ -598,7 +603,7 @@ int32_t edge_ear_set_wake_settle_frames(edge_ear_h *ear, uint32_t frames);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_disable_speech, edge_ear_start_recording
  */
-int32_t edge_ear_enable_speech(edge_ear_h *ear);
+int32_t edge_ear_enable_speech(edge_ear_h ear);
 
 /**
  * @brief Stop watching for speech.
@@ -609,7 +614,7 @@ int32_t edge_ear_enable_speech(edge_ear_h *ear);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_enable_speech
  */
-int32_t edge_ear_disable_speech(edge_ear_h *ear);
+int32_t edge_ear_disable_speech(edge_ear_h ear);
 
 /**
  * @brief Whether speech and silence are being watched for.
@@ -618,7 +623,7 @@ int32_t edge_ear_disable_speech(edge_ear_h *ear);
  * @return 1 when watching, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
  *         null handle.
  */
-int32_t edge_ear_is_speech_enabled(edge_ear_h *ear);
+int32_t edge_ear_is_speech_enabled(edge_ear_h ear);
 
 /**
  * @brief Open a recording.
@@ -630,7 +635,7 @@ int32_t edge_ear_is_speech_enabled(edge_ear_h *ear);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_stop_recording, edge_ear_set_pre_roll
  */
-int32_t edge_ear_start_recording(edge_ear_h *ear);
+int32_t edge_ear_start_recording(edge_ear_h ear);
 
 /**
  * @brief End the open recording.
@@ -642,7 +647,7 @@ int32_t edge_ear_start_recording(edge_ear_h *ear);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_start_recording
  */
-int32_t edge_ear_stop_recording(edge_ear_h *ear);
+int32_t edge_ear_stop_recording(edge_ear_h ear);
 
 /**
  * @brief Whether a recording is collecting audio.
@@ -651,7 +656,7 @@ int32_t edge_ear_stop_recording(edge_ear_h *ear);
  * @return 1 while recording, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
  *         null handle.
  */
-int32_t edge_ear_is_recording(edge_ear_h *ear);
+int32_t edge_ear_is_recording(edge_ear_h ear);
 
 /**
  * @brief How readily audio counts as speech.
@@ -661,7 +666,7 @@ int32_t edge_ear_is_recording(edge_ear_h *ear);
  * @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
  *         next frame, so an open recording follows the new value.
  */
-int32_t edge_ear_set_speech_threshold(edge_ear_h *ear, float value);
+int32_t edge_ear_set_speech_threshold(edge_ear_h ear, float value);
 
 /**
  * @brief How long the speaker must be quiet before a recording ends.
@@ -671,7 +676,7 @@ int32_t edge_ear_set_speech_threshold(edge_ear_h *ear, float value);
  * @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
  *         next frame, so an open recording follows the new value.
  */
-int32_t edge_ear_set_silence_duration(edge_ear_h *ear, double seconds);
+int32_t edge_ear_set_silence_duration(edge_ear_h ear, double seconds);
 
 /**
  * @brief The longest a recording may run before it is handed over.
@@ -682,7 +687,7 @@ int32_t edge_ear_set_silence_duration(edge_ear_h *ear, double seconds);
  *         next frame, so an open recording follows the new value.
  * @see edge_ear_set_silence_duration
  */
-int32_t edge_ear_set_max_recording(edge_ear_h *ear, double seconds);
+int32_t edge_ear_set_max_recording(edge_ear_h ear, double seconds);
 
 /**
  * @brief How long to wait for anyone to speak at all.
@@ -692,7 +697,7 @@ int32_t edge_ear_set_max_recording(edge_ear_h *ear, double seconds);
  * @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
  *         next frame, so an open recording follows the new value.
  */
-int32_t edge_ear_set_no_speech_timeout(edge_ear_h *ear, double seconds);
+int32_t edge_ear_set_no_speech_timeout(edge_ear_h ear, double seconds);
 
 /**
  * @brief How much audio from before the recording to include.
@@ -707,7 +712,7 @@ int32_t edge_ear_set_no_speech_timeout(edge_ear_h *ear, double seconds);
  * @see edge_ear_set_ring_capacity,
  *      edge_ear_set_wake_recording_waits_for_alert
  */
-int32_t edge_ear_set_pre_roll(edge_ear_h *ear, double seconds);
+int32_t edge_ear_set_pre_roll(edge_ear_h ear, double seconds);
 
 /**
  * @brief Whether a wake word recording begins again when the alert
@@ -724,7 +729,7 @@ int32_t edge_ear_set_pre_roll(edge_ear_h *ear, double seconds);
  *         open, or another negative #edge_ear_error.
  * @see edge_ear_enable_wake, edge_ear_set_pre_roll
  */
-int32_t edge_ear_set_wake_recording_waits_for_alert(edge_ear_h *ear, int32_t waits);
+int32_t edge_ear_set_wake_recording_waits_for_alert(edge_ear_h ear, int32_t waits);
 
 /**
  * @brief Register a sound read from a file.
@@ -739,7 +744,7 @@ int32_t edge_ear_set_wake_recording_waits_for_alert(edge_ear_h *ear, int32_t wai
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_play_sound, edge_ear_unregister_sound
  */
-int32_t edge_ear_register_sound_file(edge_ear_h *ear,
+int32_t edge_ear_register_sound_file(edge_ear_h ear,
                                      const char *id,
                                      const char *path,
                                      float volume);
@@ -762,7 +767,7 @@ int32_t edge_ear_register_sound_file(edge_ear_h *ear,
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_play_sound, edge_ear_unregister_sound
  */
-int32_t edge_ear_register_sound_pcm(edge_ear_h *ear,
+int32_t edge_ear_register_sound_pcm(edge_ear_h ear,
                                     const char *id,
                                     const void *data,
                                     uintptr_t len,
@@ -781,7 +786,7 @@ int32_t edge_ear_register_sound_pcm(edge_ear_h *ear,
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_register_sound_file
  */
-int32_t edge_ear_unregister_sound(edge_ear_h *ear, const char *id);
+int32_t edge_ear_unregister_sound(edge_ear_h ear, const char *id);
 
 /**
  * @brief Play a registered sound.
@@ -792,7 +797,7 @@ int32_t edge_ear_unregister_sound(edge_ear_h *ear, const char *id);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_stop_sound, edge_ear_is_playing
  */
-int32_t edge_ear_play_sound(edge_ear_h *ear, const char *id, int32_t repeat);
+int32_t edge_ear_play_sound(edge_ear_h ear, const char *id, int32_t repeat);
 
 /**
  * @brief Stop whatever is playing.
@@ -804,7 +809,7 @@ int32_t edge_ear_play_sound(edge_ear_h *ear, const char *id, int32_t repeat);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_play_sound
  */
-int32_t edge_ear_stop_sound(edge_ear_h *ear);
+int32_t edge_ear_stop_sound(edge_ear_h ear);
 
 /**
  * @brief Whether a sound is coming out of the speaker.
@@ -813,7 +818,7 @@ int32_t edge_ear_stop_sound(edge_ear_h *ear);
  * @return 1 while playing, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
  *         null handle.
  */
-int32_t edge_ear_is_playing(edge_ear_h *ear);
+int32_t edge_ear_is_playing(edge_ear_h ear);
 
 /**
  * @brief Open the microphone at this rather than at its default.
@@ -830,7 +835,7 @@ int32_t edge_ear_is_playing(edge_ear_h *ear);
  *         does not offer it, or another negative #edge_ear_error.
  * @see edge_ear_input_device_formats, edge_ear_input_format
  */
-int32_t edge_ear_set_input_device_format(edge_ear_h *ear,
+int32_t edge_ear_set_input_device_format(edge_ear_h ear,
                                          uint32_t sample_rate,
                                          uint16_t channels,
                                          edge_ear_sample_type sample_type);
@@ -851,7 +856,7 @@ int32_t edge_ear_set_input_device_format(edge_ear_h *ear,
  *         speaker is open, or another negative #edge_ear_error.
  * @see edge_ear_output_device_formats, edge_ear_output_format
  */
-int32_t edge_ear_set_output_device_format(edge_ear_h *ear,
+int32_t edge_ear_set_output_device_format(edge_ear_h ear,
                                           uint32_t sample_rate,
                                           uint16_t channels,
                                           edge_ear_sample_type sample_type);
@@ -868,7 +873,7 @@ int32_t edge_ear_set_output_device_format(edge_ear_h *ear,
  *         or another negative #edge_ear_error.
  * @see edge_ear_set_input_device_format
  */
-int32_t edge_ear_input_format(edge_ear_h *ear, edge_ear_format *format);
+int32_t edge_ear_input_format(edge_ear_h ear, edge_ear_format *format);
 
 /**
  * @brief What the speaker opened at.
@@ -882,7 +887,7 @@ int32_t edge_ear_input_format(edge_ear_h *ear, edge_ear_format *format);
  *         opens the speaker, or another negative #edge_ear_error.
  * @see edge_ear_set_output_device_format
  */
-int32_t edge_ear_output_format(edge_ear_h *ear, edge_ear_format *format);
+int32_t edge_ear_output_format(edge_ear_h ear, edge_ear_format *format);
 
 /**
  * @brief What one microphone will take.
@@ -899,7 +904,7 @@ int32_t edge_ear_output_format(edge_ear_h *ear, edge_ear_format *format);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_input_devices, edge_ear_set_format
  */
-int32_t edge_ear_input_device_formats(edge_ear_h *ear,
+int32_t edge_ear_input_device_formats(edge_ear_h ear,
                                       const char *device,
                                       const edge_ear_format **formats,
                                       uintptr_t *count);
@@ -918,7 +923,7 @@ int32_t edge_ear_input_device_formats(edge_ear_h *ear,
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_output_devices, edge_ear_register_sound_pcm
  */
-int32_t edge_ear_output_device_formats(edge_ear_h *ear,
+int32_t edge_ear_output_device_formats(edge_ear_h ear,
                                        const char *device,
                                        const edge_ear_format **formats,
                                        uintptr_t *count);
@@ -933,7 +938,7 @@ int32_t edge_ear_output_device_formats(edge_ear_h *ear,
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_set_input_device
  */
-int32_t edge_ear_input_devices(edge_ear_h *ear, const edge_ear_device **devices, uintptr_t *count);
+int32_t edge_ear_input_devices(edge_ear_h ear, const edge_ear_device **devices, uintptr_t *count);
 
 /**
  * @brief Every speaker the system offers.
@@ -945,7 +950,7 @@ int32_t edge_ear_input_devices(edge_ear_h *ear, const edge_ear_device **devices,
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_set_output_device
  */
-int32_t edge_ear_output_devices(edge_ear_h *ear, const edge_ear_device **devices, uintptr_t *count);
+int32_t edge_ear_output_devices(edge_ear_h ear, const edge_ear_device **devices, uintptr_t *count);
 
 /**
  * @brief Choose a microphone.
@@ -958,7 +963,7 @@ int32_t edge_ear_output_devices(edge_ear_h *ear, const edge_ear_device **devices
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_input_devices
  */
-int32_t edge_ear_set_input_device(edge_ear_h *ear, const char *id);
+int32_t edge_ear_set_input_device(edge_ear_h ear, const char *id);
 
 /**
  * @brief Choose a speaker.
@@ -971,7 +976,7 @@ int32_t edge_ear_set_input_device(edge_ear_h *ear, const char *id);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_output_devices
  */
-int32_t edge_ear_set_output_device(edge_ear_h *ear, const char *id);
+int32_t edge_ear_set_output_device(edge_ear_h ear, const char *id);
 
 /**
  * @brief Set the audio format one consumer receives.
@@ -987,7 +992,7 @@ int32_t edge_ear_set_output_device(edge_ear_h *ear, const char *id);
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_read
  */
-int32_t edge_ear_set_format(edge_ear_h *ear,
+int32_t edge_ear_set_format(edge_ear_h ear,
                             edge_ear_target target,
                             uint32_t sample_rate,
                             uint16_t channels,
@@ -1003,7 +1008,7 @@ int32_t edge_ear_set_format(edge_ear_h *ear,
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_set_pre_roll
  */
-int32_t edge_ear_set_ring_capacity(edge_ear_h *ear, double seconds);
+int32_t edge_ear_set_ring_capacity(edge_ear_h ear, double seconds);
 
 #ifdef __cplusplus
 }  // extern "C"

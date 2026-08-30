@@ -28,7 +28,7 @@ int main(void)
     CHECK(edge_ear_is_running(NULL) == EDGE_EAR_NULL_ARGUMENT, "null is_running");
     edge_ear_free(NULL);
 
-    edge_ear_h *ear = edge_ear_new();
+    edge_ear_h ear = edge_ear_new();
     CHECK(ear != NULL, "new");
     if (!ear) return 1;
 

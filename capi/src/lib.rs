@@ -20,15 +20,19 @@ use convert::{duration, optional_str, out_ptr, required_str};
 use error::*;
 use events::{Registered, edge_ear_event_cb};
 
-/// The handle a C caller holds. Opaque on that side, and named the way
-/// C wants to read it rather than the way Rust would spell it.
+/// What a handle points to. Opaque on the C side, which only ever
+/// names the pointer to this: `edge_ear_h`.
 #[allow(non_camel_case_types)]
-pub struct edge_ear_h {
+pub struct edge_ear_handle {
     core: EdgeEar,
     /// Strings handed out by name, kept alive until the next call that
     /// replaces them. Nothing here is ever freed by the caller.
     borrowed: Mutex<Borrowed>,
 }
+
+/// The handle a C caller holds.
+#[allow(non_camel_case_types)]
+pub type edge_ear_h = *mut edge_ear_handle;
 
 #[derive(Default)]
 struct Borrowed {
@@ -38,7 +42,7 @@ struct Borrowed {
     formats: Vec<edge_ear_format>,
 }
 
-impl edge_ear_h {
+impl edge_ear_handle {
     /// Keep the alert name alive for the caller to read.
     fn remember_alert(&self, name: Option<String>) -> *const c_char {
         let mut held = self.borrowed.lock().unwrap_or_else(|e| e.into_inner());
@@ -95,9 +99,9 @@ pub extern "C" fn edge_ear_last_error() -> *const c_char {
 ///         NULL, edge_ear_last_error() says why.
 /// @see edge_ear_free
 #[unsafe(no_mangle)]
-pub extern "C" fn edge_ear_new() -> *mut edge_ear_h {
+pub extern "C" fn edge_ear_new() -> edge_ear_h {
     match EdgeEar::new() {
-        Ok(core) => Box::into_raw(Box::new(edge_ear_h {
+        Ok(core) => Box::into_raw(Box::new(edge_ear_handle {
             core,
             borrowed: Mutex::default(),
         })),
@@ -116,7 +120,7 @@ pub extern "C" fn edge_ear_new() -> *mut edge_ear_h {
 /// @param[in] ear the handle, or NULL to do nothing
 /// @see edge_ear_new
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_free(ear: *mut edge_ear_h) {
+pub unsafe extern "C" fn edge_ear_free(ear: edge_ear_h) {
     if ear.is_null() {
         return;
     }
@@ -132,7 +136,7 @@ pub unsafe extern "C" fn edge_ear_free(ear: *mut edge_ear_h) {
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_stop, edge_ear_read
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_start(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_start(ear: edge_ear_h) -> i32 {
     with!(ear, e => report(e.core.start()))
 }
 
@@ -144,7 +148,7 @@ pub unsafe extern "C" fn edge_ear_start(ear: *mut edge_ear_h) -> i32 {
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_start
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_stop(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_stop(ear: edge_ear_h) -> i32 {
     with!(ear, e => report(e.core.stop()))
 }
 
@@ -155,7 +159,7 @@ pub unsafe extern "C" fn edge_ear_stop(ear: *mut edge_ear_h) -> i32 {
 ///         null handle.
 /// @see edge_ear_start
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_is_running(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_is_running(ear: edge_ear_h) -> i32 {
     with!(ear, e => i32::from(e.core.is_running()))
 }
 
@@ -176,7 +180,7 @@ pub unsafe extern "C" fn edge_ear_is_running(ear: *mut edge_ear_h) -> i32 {
 /// @see edge_ear_set_format
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_read(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     buf: *mut i16,
     cap: usize,
     timeout_ms: i32,
@@ -229,7 +233,7 @@ pub unsafe extern "C" fn edge_ear_read(
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_on_event(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     callback: edge_ear_event_cb,
     user: *mut c_void,
 ) -> i32 {
@@ -252,7 +256,7 @@ pub unsafe extern "C" fn edge_ear_on_event(
 /// @see edge_ear_load_wake_model
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_load_wake_features(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     spectrogram: *const c_char,
     features: *const c_char,
 ) -> i32 {
@@ -273,10 +277,7 @@ pub unsafe extern "C" fn edge_ear_load_wake_features(
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_load_wake_features, edge_ear_enable_wake
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_load_wake_model(
-    ear: *mut edge_ear_h,
-    path: *const c_char,
-) -> i32 {
+pub unsafe extern "C" fn edge_ear_load_wake_model(ear: edge_ear_h, path: *const c_char) -> i32 {
     with!(ear, e => {
         let path = ok_or_return!(required_str(path, "the model path"));
         report(e.core.load_wake_model(Path::new(path)))
@@ -292,7 +293,7 @@ pub unsafe extern "C" fn edge_ear_load_wake_model(
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_disable_wake, edge_ear_register_sound_file
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_enable_wake(ear: *mut edge_ear_h, alert: *const c_char) -> i32 {
+pub unsafe extern "C" fn edge_ear_enable_wake(ear: edge_ear_h, alert: *const c_char) -> i32 {
     with!(ear, e => {
         let alert = ok_or_return!(optional_str(alert, "the alert name"));
         report(e.core.enable_wake(alert))
@@ -307,7 +308,7 @@ pub unsafe extern "C" fn edge_ear_enable_wake(ear: *mut edge_ear_h, alert: *cons
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_enable_wake
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_disable_wake(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_disable_wake(ear: edge_ear_h) -> i32 {
     with!(ear, e => report(e.core.disable_wake()))
 }
 
@@ -317,7 +318,7 @@ pub unsafe extern "C" fn edge_ear_disable_wake(ear: *mut edge_ear_h) -> i32 {
 /// @return 1 when listening, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
 ///         null handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_is_wake_enabled(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_is_wake_enabled(ear: edge_ear_h) -> i32 {
     with!(ear, e => i32::from(e.core.is_wake_enabled()))
 }
 
@@ -329,7 +330,7 @@ pub unsafe extern "C" fn edge_ear_is_wake_enabled(ear: *mut edge_ear_h) -> i32 {
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_set_wake_settle_frames
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_reset_wake(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_reset_wake(ear: edge_ear_h) -> i32 {
     with!(ear, e => report(e.core.reset_wake()))
 }
 
@@ -344,7 +345,7 @@ pub unsafe extern "C" fn edge_ear_reset_wake(ear: *mut edge_ear_h) -> i32 {
 ///         scored yet.
 /// @see edge_ear_set_wake_threshold
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_wake_score(ear: *mut edge_ear_h, score: *mut f32) -> i32 {
+pub unsafe extern "C" fn edge_ear_wake_score(ear: edge_ear_h, score: *mut f32) -> i32 {
     with!(ear, e => {
         let score = ok_or_return!(out_ptr(score, "score"));
         match e.core.wake_score() {
@@ -362,10 +363,7 @@ pub unsafe extern "C" fn edge_ear_wake_score(ear: *mut edge_ear_h, score: *mut f
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_enable_wake
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_wake_alert(
-    ear: *mut edge_ear_h,
-    alert: *mut *const c_char,
-) -> i32 {
+pub unsafe extern "C" fn edge_ear_wake_alert(ear: edge_ear_h, alert: *mut *const c_char) -> i32 {
     with!(ear, e => {
         let out = ok_or_return!(out_ptr(alert, "alert"));
         *out = e.remember_alert(e.core.wake_alert());
@@ -380,7 +378,7 @@ pub unsafe extern "C" fn edge_ear_wake_alert(
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_wake_score
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_set_wake_threshold(ear: *mut edge_ear_h, value: f32) -> i32 {
+pub unsafe extern "C" fn edge_ear_set_wake_threshold(ear: edge_ear_h, value: f32) -> i32 {
     with!(ear, e => report(e.core.set_wake_threshold(value)))
 }
 
@@ -394,7 +392,7 @@ pub unsafe extern "C" fn edge_ear_set_wake_threshold(ear: *mut edge_ear_h, value
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_reset_wake
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_set_wake_settle_frames(ear: *mut edge_ear_h, frames: u32) -> i32 {
+pub unsafe extern "C" fn edge_ear_set_wake_settle_frames(ear: edge_ear_h, frames: u32) -> i32 {
     with!(ear, e => report(e.core.set_wake_settle_frames(frames)))
 }
 
@@ -408,7 +406,7 @@ pub unsafe extern "C" fn edge_ear_set_wake_settle_frames(ear: *mut edge_ear_h, f
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_disable_speech, edge_ear_start_recording
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_enable_speech(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_enable_speech(ear: edge_ear_h) -> i32 {
     with!(ear, e => report(e.core.enable_speech()))
 }
 
@@ -420,7 +418,7 @@ pub unsafe extern "C" fn edge_ear_enable_speech(ear: *mut edge_ear_h) -> i32 {
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_enable_speech
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_disable_speech(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_disable_speech(ear: edge_ear_h) -> i32 {
     with!(ear, e => report(e.core.disable_speech()))
 }
 
@@ -430,7 +428,7 @@ pub unsafe extern "C" fn edge_ear_disable_speech(ear: *mut edge_ear_h) -> i32 {
 /// @return 1 when watching, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
 ///         null handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_is_speech_enabled(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_is_speech_enabled(ear: edge_ear_h) -> i32 {
     with!(ear, e => i32::from(e.core.is_speech_enabled()))
 }
 
@@ -443,7 +441,7 @@ pub unsafe extern "C" fn edge_ear_is_speech_enabled(ear: *mut edge_ear_h) -> i32
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_stop_recording, edge_ear_set_pre_roll
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_start_recording(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_start_recording(ear: edge_ear_h) -> i32 {
     with!(ear, e => report(e.core.start_recording()))
 }
 
@@ -456,7 +454,7 @@ pub unsafe extern "C" fn edge_ear_start_recording(ear: *mut edge_ear_h) -> i32 {
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_start_recording
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_stop_recording(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_stop_recording(ear: edge_ear_h) -> i32 {
     with!(ear, e => report(e.core.stop_recording()))
 }
 
@@ -466,7 +464,7 @@ pub unsafe extern "C" fn edge_ear_stop_recording(ear: *mut edge_ear_h) -> i32 {
 /// @return 1 while recording, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
 ///         null handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_is_recording(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_is_recording(ear: edge_ear_h) -> i32 {
     with!(ear, e => i32::from(e.core.is_recording()))
 }
 
@@ -477,7 +475,7 @@ pub unsafe extern "C" fn edge_ear_is_recording(ear: *mut edge_ear_h) -> i32 {
 /// @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
 ///         next frame, so an open recording follows the new value.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_set_speech_threshold(ear: *mut edge_ear_h, value: f32) -> i32 {
+pub unsafe extern "C" fn edge_ear_set_speech_threshold(ear: edge_ear_h, value: f32) -> i32 {
     with!(ear, e => report(e.core.set_speech_threshold(value)))
 }
 
@@ -488,7 +486,7 @@ pub unsafe extern "C" fn edge_ear_set_speech_threshold(ear: *mut edge_ear_h, val
 /// @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
 ///         next frame, so an open recording follows the new value.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_set_silence_duration(ear: *mut edge_ear_h, seconds: f64) -> i32 {
+pub unsafe extern "C" fn edge_ear_set_silence_duration(ear: edge_ear_h, seconds: f64) -> i32 {
     with!(ear, e => {
         let span = ok_or_return!(duration(seconds, "the silence duration"));
         report(e.core.set_silence_duration(span))
@@ -503,7 +501,7 @@ pub unsafe extern "C" fn edge_ear_set_silence_duration(ear: *mut edge_ear_h, sec
 ///         next frame, so an open recording follows the new value.
 /// @see edge_ear_set_silence_duration
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_set_max_recording(ear: *mut edge_ear_h, seconds: f64) -> i32 {
+pub unsafe extern "C" fn edge_ear_set_max_recording(ear: edge_ear_h, seconds: f64) -> i32 {
     with!(ear, e => {
         let span = ok_or_return!(duration(seconds, "the maximum recording length"));
         report(e.core.set_max_recording(span))
@@ -517,7 +515,7 @@ pub unsafe extern "C" fn edge_ear_set_max_recording(ear: *mut edge_ear_h, second
 /// @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
 ///         next frame, so an open recording follows the new value.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_set_no_speech_timeout(ear: *mut edge_ear_h, seconds: f64) -> i32 {
+pub unsafe extern "C" fn edge_ear_set_no_speech_timeout(ear: edge_ear_h, seconds: f64) -> i32 {
     with!(ear, e => {
         let span = ok_or_return!(duration(seconds, "the no-speech timeout"));
         report(e.core.set_no_speech_timeout(span))
@@ -536,7 +534,7 @@ pub unsafe extern "C" fn edge_ear_set_no_speech_timeout(ear: *mut edge_ear_h, se
 /// @see edge_ear_set_ring_capacity,
 ///      edge_ear_set_wake_recording_waits_for_alert
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_set_pre_roll(ear: *mut edge_ear_h, seconds: f64) -> i32 {
+pub unsafe extern "C" fn edge_ear_set_pre_roll(ear: edge_ear_h, seconds: f64) -> i32 {
     with!(ear, e => {
         let span = ok_or_return!(duration(seconds, "the pre-roll"));
         report(e.core.set_pre_roll(span))
@@ -558,7 +556,7 @@ pub unsafe extern "C" fn edge_ear_set_pre_roll(ear: *mut edge_ear_h, seconds: f6
 /// @see edge_ear_enable_wake, edge_ear_set_pre_roll
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_wake_recording_waits_for_alert(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     waits: i32,
 ) -> i32 {
     with!(ear, e => report(e.core.set_wake_recording_waits_for_alert(waits != 0)))
@@ -579,7 +577,7 @@ pub unsafe extern "C" fn edge_ear_set_wake_recording_waits_for_alert(
 /// @see edge_ear_play_sound, edge_ear_unregister_sound
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_register_sound_file(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     id: *const c_char,
     path: *const c_char,
     volume: f32,
@@ -618,7 +616,7 @@ fn sample_type_of(kind: edge_ear_sample_type) -> SampleType {
 /// @see edge_ear_play_sound, edge_ear_unregister_sound
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_register_sound_pcm(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     id: *const c_char,
     data: *const c_void,
     len: usize,
@@ -660,7 +658,7 @@ pub unsafe extern "C" fn edge_ear_register_sound_pcm(
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_register_sound_file
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_unregister_sound(ear: *mut edge_ear_h, id: *const c_char) -> i32 {
+pub unsafe extern "C" fn edge_ear_unregister_sound(ear: edge_ear_h, id: *const c_char) -> i32 {
     with!(ear, e => {
         let id = ok_or_return!(required_str(id, "the sound name"));
         report(e.core.unregister_sound(id))
@@ -676,7 +674,7 @@ pub unsafe extern "C" fn edge_ear_unregister_sound(ear: *mut edge_ear_h, id: *co
 /// @see edge_ear_stop_sound, edge_ear_is_playing
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_play_sound(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     id: *const c_char,
     repeat: i32,
 ) -> i32 {
@@ -695,7 +693,7 @@ pub unsafe extern "C" fn edge_ear_play_sound(
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_play_sound
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_stop_sound(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_stop_sound(ear: edge_ear_h) -> i32 {
     with!(ear, e => report(e.core.stop_sound()))
 }
 
@@ -705,7 +703,7 @@ pub unsafe extern "C" fn edge_ear_stop_sound(ear: *mut edge_ear_h) -> i32 {
 /// @return 1 while playing, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
 ///         null handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_is_playing(ear: *mut edge_ear_h) -> i32 {
+pub unsafe extern "C" fn edge_ear_is_playing(ear: edge_ear_h) -> i32 {
     with!(ear, e => i32::from(e.core.is_playing()))
 }
 
@@ -741,7 +739,7 @@ pub struct edge_ear_format {
 }
 
 fn list_formats(
-    ear: &edge_ear_h,
+    ear: &edge_ear_handle,
     found: edge_ear_core::error::Result<Vec<edge_ear_core::backend::SupportedFormat>>,
     formats: *mut *const edge_ear_format,
     count: *mut usize,
@@ -778,7 +776,7 @@ fn list_formats(
 }
 
 fn list_devices(
-    ear: &edge_ear_h,
+    ear: &edge_ear_handle,
     found: edge_ear_core::error::Result<Vec<edge_ear_core::backend::DeviceInfo>>,
     devices: *mut *const edge_ear_device,
     count: *mut usize,
@@ -837,7 +835,7 @@ fn list_devices(
 /// @see edge_ear_input_device_formats, edge_ear_input_format
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_input_device_format(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     sample_rate: u32,
     channels: u16,
     sample_type: edge_ear_sample_type,
@@ -863,7 +861,7 @@ pub unsafe extern "C" fn edge_ear_set_input_device_format(
 /// @see edge_ear_output_device_formats, edge_ear_output_format
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_output_device_format(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     sample_rate: u32,
     channels: u16,
     sample_type: edge_ear_sample_type,
@@ -885,7 +883,7 @@ pub unsafe extern "C" fn edge_ear_set_output_device_format(
 /// @see edge_ear_set_input_device_format
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_input_format(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     format: *mut edge_ear_format,
 ) -> i32 {
     with!(ear, e => opened_format(e.core.input_format(), format, EDGE_EAR_NOT_RUNNING))
@@ -903,7 +901,7 @@ pub unsafe extern "C" fn edge_ear_input_format(
 /// @see edge_ear_set_output_device_format
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_output_format(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     format: *mut edge_ear_format,
 ) -> i32 {
     with!(ear, e => opened_format(e.core.output_format(), format, EDGE_EAR_NOT_RUNNING))
@@ -958,7 +956,7 @@ fn opened_format(
 /// @see edge_ear_input_devices, edge_ear_set_format
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_input_device_formats(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     device: *const c_char,
     formats: *mut *const edge_ear_format,
     count: *mut usize,
@@ -984,7 +982,7 @@ pub unsafe extern "C" fn edge_ear_input_device_formats(
 /// @see edge_ear_output_devices, edge_ear_register_sound_pcm
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_output_device_formats(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     device: *const c_char,
     formats: *mut *const edge_ear_format,
     count: *mut usize,
@@ -1006,7 +1004,7 @@ pub unsafe extern "C" fn edge_ear_output_device_formats(
 /// @see edge_ear_set_input_device
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_input_devices(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     devices: *mut *const edge_ear_device,
     count: *mut usize,
 ) -> i32 {
@@ -1023,7 +1021,7 @@ pub unsafe extern "C" fn edge_ear_input_devices(
 /// @see edge_ear_set_output_device
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_output_devices(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     devices: *mut *const edge_ear_device,
     count: *mut usize,
 ) -> i32 {
@@ -1040,7 +1038,7 @@ pub unsafe extern "C" fn edge_ear_output_devices(
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_input_devices
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_set_input_device(ear: *mut edge_ear_h, id: *const c_char) -> i32 {
+pub unsafe extern "C" fn edge_ear_set_input_device(ear: edge_ear_h, id: *const c_char) -> i32 {
     with!(ear, e => {
         let id = ok_or_return!(optional_str(id, "the device identifier"));
         report(e.core.set_input_device(id))
@@ -1057,10 +1055,7 @@ pub unsafe extern "C" fn edge_ear_set_input_device(ear: *mut edge_ear_h, id: *co
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_output_devices
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_set_output_device(
-    ear: *mut edge_ear_h,
-    id: *const c_char,
-) -> i32 {
+pub unsafe extern "C" fn edge_ear_set_output_device(ear: edge_ear_h, id: *const c_char) -> i32 {
     with!(ear, e => {
         let id = ok_or_return!(optional_str(id, "the device identifier"));
         report(e.core.set_output_device(id))
@@ -1108,7 +1103,7 @@ pub enum edge_ear_sample_type {
 /// @see edge_ear_read
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_format(
-    ear: *mut edge_ear_h,
+    ear: edge_ear_h,
     target: edge_ear_target,
     sample_rate: u32,
     channels: u16,
@@ -1134,7 +1129,7 @@ pub unsafe extern "C" fn edge_ear_set_format(
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_set_pre_roll
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_set_ring_capacity(ear: *mut edge_ear_h, seconds: f64) -> i32 {
+pub unsafe extern "C" fn edge_ear_set_ring_capacity(ear: edge_ear_h, seconds: f64) -> i32 {
     with!(ear, e => {
         let span = ok_or_return!(duration(seconds, "the queue capacity"));
         report(e.core.set_ring_capacity(span))
