@@ -64,7 +64,7 @@ this library is MIT or Apache-2.0, so it cannot pass them on. See
 ## Building
 
 ```bash
-sudo apt install libasound2-dev pkg-config   # Linux
+sudo apt install libasound2-dev pkg-config   # Linux; macOS needs nothing
 cargo build --workspace
 cargo test --workspace
 ```
@@ -74,7 +74,9 @@ ignored:
 
 ```bash
 cargo test --workspace -- --ignored
-EDGE_EAR_WAKE_DIR=/path/to/models cargo test -p edge-ear-core -- --ignored
+EDGE_EAR_WAKE_DIR=/path/to/models \
+  EDGE_EAR_WAKE_WAV=/path/to/wake-word.wav \
+  cargo test -p edge-ear-core -- --ignored
 ```
 
 Try it out loud:
