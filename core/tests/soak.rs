@@ -21,15 +21,25 @@ fn how_long() -> Duration {
     Duration::from_secs(secs)
 }
 
-/// Resident memory in kilobytes, straight from the kernel.
+/// Resident memory in kilobytes. Linux keeps it in `/proc`, which no
+/// other system has, so ask `ps` where there is none.
 fn memory_kb() -> u64 {
-    let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
-    let pages: u64 = statm
-        .split_whitespace()
-        .nth(1)
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    pages * 4
+    if let Ok(statm) = std::fs::read_to_string("/proc/self/statm") {
+        let pages: u64 = statm
+            .split_whitespace()
+            .nth(1)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        return pages * 4;
+    }
+    let asked = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output();
+    asked
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
 }
 
 #[test]
