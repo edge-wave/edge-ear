@@ -193,8 +193,7 @@ pub struct SpeechEnded {
     samples: Vec<i16>,
     #[pyo3(get)]
     sample_rate: u32,
-    /// Why it ended: "silence", "maximum length", "no speech", or
-    /// "stopped by the application".
+    /// Why it ended, as one of the names on [`EndReason`].
     #[pyo3(get)]
     reason: String,
     /// Seconds.
@@ -265,8 +264,33 @@ impl EventsDropped {
     }
 }
 
+/// The four endings a recording can have, as the names
+/// `SpeechEnded.reason` carries. They are plain strings, so a
+/// comparison against one reads the same either way; naming them here
+/// means a misspelling fails at the attribute rather than by quietly
+/// never matching. C names the same four through
+/// `edge_ear_end_reason`.
+#[pyclass(frozen, name = "EndReason")]
+pub struct EndReasonNames;
+
+#[pymethods]
+impl EndReasonNames {
+    /// The speaker went quiet for the silence duration.
+    #[classattr]
+    const SILENCE: &'static str = "silence";
+    /// The length cap was reached while someone was still talking.
+    #[classattr]
+    const MAX_LENGTH: &'static str = "max_length";
+    /// Nobody spoke at all before the timeout.
+    #[classattr]
+    const NO_SPEECH: &'static str = "no_speech";
+    /// The application ended it.
+    #[classattr]
+    const STOPPED: &'static str = "stopped";
+}
+
 fn reason_name(reason: EndReason) -> String {
-    reason.to_string()
+    reason.name().to_string()
 }
 
 /// Build the Python object for one event. Runs on the thread that
@@ -787,6 +811,7 @@ fn edge_ear(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SoundFinished>()?;
     m.add_class::<DeviceError>()?;
     m.add_class::<EventsDropped>()?;
+    m.add_class::<EndReasonNames>()?;
 
     let py = m.py();
     m.add("EdgeEarError", py.get_type::<EdgeEarError>())?;
