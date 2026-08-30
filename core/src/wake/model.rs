@@ -136,12 +136,14 @@ impl WakeModel {
     /// Load the model for the phrase to listen for. Its shape is
     /// checked here rather than left to fail oddly later, and a model
     /// for another pipeline is refused by name of what was wrong.
+    /// A model that left its batch dimension open is taken as it is,
+    /// since one window is fed at a time either way.
     pub fn load_word(&mut self, path: &Path) -> Result<()> {
         let stage = Stage::load(path, "wake word")?;
 
         let expected = [1i64, FEATURE_WINDOW as i64, FEATURE_WIDTH as i64];
         let shape = shape_of(&stage.session.inputs()[0]);
-        if shape != expected {
+        if !accepts(&shape, &expected) {
             return Err(Error::ModelInvalid {
                 path: path.to_path_buf(),
                 reason: format!(
@@ -150,7 +152,7 @@ impl WakeModel {
             });
         }
         let out = shape_of(&stage.session.outputs()[0]);
-        if out != [1, 1] {
+        if !accepts(&out, &[1, 1]) {
             return Err(Error::ModelInvalid {
                 path: path.to_path_buf(),
                 reason: format!("a wake word model must give [1, 1], this one gives {out:?}"),
@@ -319,6 +321,23 @@ impl WakeSource for ScriptedWake {
     }
 }
 
+/// A dimension the model declined to fix, which ONNX reports as -1.
+const OPEN: i64 = -1;
+
+/// Whether a model that says it takes `shape` can be driven with
+/// `expected`. Every dimension must agree, except the batch, which a
+/// model may leave open: most published wake words are exported that
+/// way, and this pipeline feeds one window at a time whatever the
+/// model would have allowed. Refusing those meant editing the ONNX
+/// graph by hand before a stock model would load.
+fn accepts(shape: &[i64], expected: &[i64]) -> bool {
+    if shape.is_empty() || shape.len() != expected.len() {
+        return false;
+    }
+    let batch = shape[0] == expected[0] || shape[0] == OPEN;
+    batch && shape[1..] == expected[1..]
+}
+
 fn shape_of(outlet: &ort::value::Outlet) -> Vec<i64> {
     match outlet.dtype() {
         ort::value::ValueType::Tensor { shape, .. } => shape.iter().copied().collect(),
@@ -342,6 +361,31 @@ mod tests {
             &dir.join("melspectrogram.onnx"),
             &dir.join("embedding_model.onnx"),
         )
+    }
+
+    /// The published wake words leave their batch open, so the check
+    /// that guards the pipeline has to take them. These need no model
+    /// file, so they run everywhere the shape rule matters.
+    #[test]
+    fn a_model_that_left_its_batch_open_is_taken() {
+        let window = [1i64, FEATURE_WINDOW as i64, FEATURE_WIDTH as i64];
+        assert!(accepts(&[1, 16, 96], &window), "a fixed batch of one");
+        assert!(accepts(&[OPEN, 16, 96], &window), "an open batch");
+        assert!(accepts(&[OPEN, 1], &[1, 1]), "an open batch on the output");
+    }
+
+    /// An open batch is the only thing forgiven. Anything else wrong
+    /// still has to be refused, or the model would fail later and
+    /// further from the cause.
+    #[test]
+    fn an_open_batch_forgives_nothing_else() {
+        let window = [1i64, FEATURE_WINDOW as i64, FEATURE_WIDTH as i64];
+        assert!(!accepts(&[OPEN, 16, 32], &window), "the wrong width");
+        assert!(!accepts(&[OPEN, OPEN, 96], &window), "an open window");
+        assert!(!accepts(&[OPEN, 96], &window), "too few dimensions");
+        assert!(!accepts(&[OPEN, 16, 96, 1], &window), "too many");
+        assert!(!accepts(&[4, 16, 96], &window), "a batch of four");
+        assert!(!accepts(&[], &window), "nothing at all");
     }
 
     #[test]
