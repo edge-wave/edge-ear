@@ -18,7 +18,7 @@ header = """
  *         --output capi/include/edge_ear.h
  *
  * Errors: every fallible call returns int. 0 is success, negative names
- * the failure, and edge_ear_last_error() describes the most recent one
+ * the failure, and edge_ear_get_last_error() describes the most recent one
  * on this thread.
  *
  * Memory: the caller owns everything it passes in, and the library

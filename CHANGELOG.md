@@ -5,6 +5,17 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 0.y release may break the public API.
 
+## [Unreleased]
+
+### Changed
+
+- capi: getters are now named `edge_ear_get_*`. Renamed:
+  `edge_ear_last_error`, `edge_ear_wake_score`, `edge_ear_wake_alert`,
+  `edge_ear_input_format`, `edge_ear_output_format`,
+  `edge_ear_input_device_formats`, `edge_ear_output_device_formats`,
+  `edge_ear_input_devices`, `edge_ear_output_devices` (breaking).
+  Boolean `is_*` queries are unchanged.
+
 ## [0.2.0]
 
 0.1.0 was never tagged, so this entry covers everything built since

@@ -87,7 +87,7 @@ macro_rules! ok_or_return {
 /// @return The message, borrowed until the next call on this thread
 ///         fails. Empty when nothing has failed yet.
 #[unsafe(no_mangle)]
-pub extern "C" fn edge_ear_last_error() -> *const c_char {
+pub extern "C" fn edge_ear_get_last_error() -> *const c_char {
     last_message()
 }
 
@@ -96,7 +96,7 @@ pub extern "C" fn edge_ear_last_error() -> *const c_char {
 /// @brief Make a handle.
 ///
 /// @return The handle, or NULL when no device could be reached. On
-///         NULL, edge_ear_last_error() says why.
+///         NULL, edge_ear_get_last_error() says why.
 /// @see edge_ear_free
 #[unsafe(no_mangle)]
 pub extern "C" fn edge_ear_new() -> edge_ear_h {
@@ -345,7 +345,7 @@ pub unsafe extern "C" fn edge_ear_reset_wake(ear: edge_ear_h) -> i32 {
 ///         scored yet.
 /// @see edge_ear_set_wake_threshold
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_wake_score(ear: edge_ear_h, score: *mut f32) -> i32 {
+pub unsafe extern "C" fn edge_ear_get_wake_score(ear: edge_ear_h, score: *mut f32) -> i32 {
     with!(ear, e => {
         let score = ok_or_return!(out_ptr(score, "score"));
         match e.core.wake_score() {
@@ -363,7 +363,10 @@ pub unsafe extern "C" fn edge_ear_wake_score(ear: edge_ear_h, score: *mut f32) -
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_enable_wake
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_wake_alert(ear: edge_ear_h, alert: *mut *const c_char) -> i32 {
+pub unsafe extern "C" fn edge_ear_get_wake_alert(
+    ear: edge_ear_h,
+    alert: *mut *const c_char,
+) -> i32 {
     with!(ear, e => {
         let out = ok_or_return!(out_ptr(alert, "alert"));
         *out = e.remember_alert(e.core.wake_alert());
@@ -376,7 +379,7 @@ pub unsafe extern "C" fn edge_ear_wake_alert(ear: edge_ear_h, alert: *mut *const
 /// @param[in] ear the handle
 /// @param[in] value from 0.0 to 1.0
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
-/// @see edge_ear_wake_score
+/// @see edge_ear_get_wake_score
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_wake_threshold(ear: edge_ear_h, value: f32) -> i32 {
     with!(ear, e => report(e.core.set_wake_threshold(value)))
@@ -832,7 +835,7 @@ fn list_devices(
 /// @param[in] sample_type how one sample is written
 /// @return #EDGE_EAR_OK, #EDGE_EAR_UNSUPPORTED_FORMAT when the device
 ///         does not offer it, or another negative #edge_ear_error.
-/// @see edge_ear_input_device_formats, edge_ear_input_format
+/// @see edge_ear_get_input_device_formats, edge_ear_get_input_format
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_input_device_format(
     ear: edge_ear_h,
@@ -858,7 +861,7 @@ pub unsafe extern "C" fn edge_ear_set_input_device_format(
 /// @return #EDGE_EAR_OK, #EDGE_EAR_UNSUPPORTED_FORMAT when the device
 ///         does not offer it, #EDGE_EAR_RUNNING_NOT_ALLOWED once the
 ///         speaker is open, or another negative #edge_ear_error.
-/// @see edge_ear_output_device_formats, edge_ear_output_format
+/// @see edge_ear_get_output_device_formats, edge_ear_get_output_format
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_output_device_format(
     ear: edge_ear_h,
@@ -882,7 +885,7 @@ pub unsafe extern "C" fn edge_ear_set_output_device_format(
 ///         or another negative #edge_ear_error.
 /// @see edge_ear_set_input_device_format
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_input_format(
+pub unsafe extern "C" fn edge_ear_get_input_format(
     ear: edge_ear_h,
     format: *mut edge_ear_format,
 ) -> i32 {
@@ -900,7 +903,7 @@ pub unsafe extern "C" fn edge_ear_input_format(
 ///         opens the speaker, or another negative #edge_ear_error.
 /// @see edge_ear_set_output_device_format
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_output_format(
+pub unsafe extern "C" fn edge_ear_get_output_format(
     ear: edge_ear_h,
     format: *mut edge_ear_format,
 ) -> i32 {
@@ -953,9 +956,9 @@ fn opened_format(
 ///             listing call on this handle
 /// @param[out] count how many entries the list holds
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
-/// @see edge_ear_input_devices, edge_ear_set_format
+/// @see edge_ear_get_input_devices, edge_ear_set_format
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_input_device_formats(
+pub unsafe extern "C" fn edge_ear_get_input_device_formats(
     ear: edge_ear_h,
     device: *const c_char,
     formats: *mut *const edge_ear_format,
@@ -979,9 +982,9 @@ pub unsafe extern "C" fn edge_ear_input_device_formats(
 ///             listing call on this handle
 /// @param[out] count how many entries the list holds
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
-/// @see edge_ear_output_devices, edge_ear_register_sound_pcm
+/// @see edge_ear_get_output_devices, edge_ear_register_sound_pcm
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_output_device_formats(
+pub unsafe extern "C" fn edge_ear_get_output_device_formats(
     ear: edge_ear_h,
     device: *const c_char,
     formats: *mut *const edge_ear_format,
@@ -1003,7 +1006,7 @@ pub unsafe extern "C" fn edge_ear_output_device_formats(
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_set_input_device
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_input_devices(
+pub unsafe extern "C" fn edge_ear_get_input_devices(
     ear: edge_ear_h,
     devices: *mut *const edge_ear_device,
     count: *mut usize,
@@ -1020,7 +1023,7 @@ pub unsafe extern "C" fn edge_ear_input_devices(
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_set_output_device
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_output_devices(
+pub unsafe extern "C" fn edge_ear_get_output_devices(
     ear: edge_ear_h,
     devices: *mut *const edge_ear_device,
     count: *mut usize,
@@ -1033,10 +1036,10 @@ pub unsafe extern "C" fn edge_ear_output_devices(
 /// The name is taken as given and checked when capture starts.
 ///
 /// @param[in] ear the handle
-/// @param[in] id an identifier from edge_ear_input_devices(), or NULL
+/// @param[in] id an identifier from edge_ear_get_input_devices(), or NULL
 ///            for the system default
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
-/// @see edge_ear_input_devices
+/// @see edge_ear_get_input_devices
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_input_device(ear: edge_ear_h, id: *const c_char) -> i32 {
     with!(ear, e => {
@@ -1050,10 +1053,10 @@ pub unsafe extern "C" fn edge_ear_set_input_device(ear: edge_ear_h, id: *const c
 /// The name is taken as given and checked when capture starts.
 ///
 /// @param[in] ear the handle
-/// @param[in] id an identifier from edge_ear_output_devices(), or NULL
+/// @param[in] id an identifier from edge_ear_get_output_devices(), or NULL
 ///            for the system default
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
-/// @see edge_ear_output_devices
+/// @see edge_ear_get_output_devices
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_output_device(ear: edge_ear_h, id: *const c_char) -> i32 {
     with!(ear, e => {

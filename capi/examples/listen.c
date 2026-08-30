@@ -33,13 +33,13 @@ int main(int argc, char **argv)
 {
     edge_ear_h ear = edge_ear_new();
     if (!ear) {
-        fprintf(stderr, "could not open a device: %s\n", edge_ear_last_error());
+        fprintf(stderr, "could not open a device: %s\n", edge_ear_get_last_error());
         return 1;
     }
 
     const edge_ear_device *devices;
     size_t count;
-    if (edge_ear_input_devices(ear, &devices, &count) == EDGE_EAR_OK) {
+    if (edge_ear_get_input_devices(ear, &devices, &count) == EDGE_EAR_OK) {
         printf("%zu microphones\n", count);
         for (size_t i = 0; i < count; i++) {
             printf("  %s%s\n", devices[i].name, devices[i].is_default ? " (default)" : "");
@@ -47,7 +47,7 @@ int main(int argc, char **argv)
     }
 
     if (argc > 1 && edge_ear_set_input_device(ear, argv[1]) != EDGE_EAR_OK) {
-        fprintf(stderr, "no such microphone: %s\n", edge_ear_last_error());
+        fprintf(stderr, "no such microphone: %s\n", edge_ear_get_last_error());
         edge_ear_free(ear);
         return 1;
     }
@@ -56,7 +56,7 @@ int main(int argc, char **argv)
 
     int rc = edge_ear_start(ear);
     if (rc != EDGE_EAR_OK) {
-        fprintf(stderr, "could not start: %s\n", edge_ear_last_error());
+        fprintf(stderr, "could not start: %s\n", edge_ear_get_last_error());
         edge_ear_free(ear);
         return 1;
     }
@@ -66,7 +66,7 @@ int main(int argc, char **argv)
         size_t got = 0;
         rc = edge_ear_read(ear, buf, sizeof buf / sizeof buf[0], 2000, &got);
         if (rc != EDGE_EAR_OK) {
-            fprintf(stderr, "read failed: %s\n", edge_ear_last_error());
+            fprintf(stderr, "read failed: %s\n", edge_ear_get_last_error());
             break;
         }
         long peak = 0;
