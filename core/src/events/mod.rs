@@ -17,6 +17,22 @@ pub enum EndReason {
     Stopped,
 }
 
+impl EndReason {
+    /// The name a binding hands an application, as against the
+    /// sentence [`Display`](std::fmt::Display) writes for a person.
+    /// Held to a word an application can compare or spell out, and
+    /// kept in step with the C enum, so that C and Python name the
+    /// same four endings the same way.
+    pub fn name(&self) -> &'static str {
+        match self {
+            EndReason::Silence => "silence",
+            EndReason::MaxLength => "max_length",
+            EndReason::NoSpeech => "no_speech",
+            EndReason::Stopped => "stopped",
+        }
+    }
+}
+
 impl std::fmt::Display for EndReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -66,5 +82,46 @@ impl Event {
             Event::DeviceError { .. } => "device error",
             Event::EventsDropped { .. } => "events dropped",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ALL: [EndReason; 4] = [
+        EndReason::Silence,
+        EndReason::MaxLength,
+        EndReason::NoSpeech,
+        EndReason::Stopped,
+    ];
+
+    /// A binding hands these to an application, which compares them.
+    /// A space in one means every caller writes it out in full and a
+    /// typo goes unnoticed, so the names are held to one word.
+    #[test]
+    fn every_ending_has_its_own_name_in_one_word() {
+        let mut seen = Vec::new();
+        for reason in ALL {
+            let name = reason.name();
+            assert!(!name.is_empty(), "{reason:?} has no name");
+            assert!(
+                name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "{name:?} is not a name an application can type"
+            );
+            assert!(!seen.contains(&name), "{name:?} names two endings");
+            seen.push(name);
+        }
+    }
+
+    /// The sentence is for a person reading a log; the name is for an
+    /// application. Keeping the two apart is the point, so this fails
+    /// if one is ever quietly made the other.
+    #[test]
+    fn the_name_is_not_the_sentence() {
+        assert_eq!(EndReason::MaxLength.name(), "max_length");
+        assert_eq!(EndReason::MaxLength.to_string(), "maximum length");
+        assert_eq!(EndReason::Stopped.name(), "stopped");
+        assert_eq!(EndReason::Stopped.to_string(), "stopped by the application");
     }
 }
