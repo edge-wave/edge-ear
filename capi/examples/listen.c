@@ -52,7 +52,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    edge_ear_on_event(ear, on_event, NULL);
+    edge_ear_set_event_cb(ear, on_event, NULL);
 
     int rc = edge_ear_start(ear);
     if (rc != EDGE_EAR_OK) {

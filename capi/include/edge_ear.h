@@ -475,7 +475,7 @@ int32_t edge_ear_read(edge_ear_h ear,
  *            alive until the handle is freed
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  */
-int32_t edge_ear_on_event(edge_ear_h ear, edge_ear_event_cb callback, void *user);
+int32_t edge_ear_set_event_cb(edge_ear_h ear, edge_ear_event_cb callback, void *user);
 
 /**
  * @brief Supply the two models every wake word shares.

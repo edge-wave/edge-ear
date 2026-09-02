@@ -127,7 +127,7 @@ int main(void)
     CHECK(edge_ear_is_recording(ear) == 0, "not recording");
 
     int endings = 0;
-    CHECK(edge_ear_on_event(ear, on_event, &endings) == EDGE_EAR_OK, "handler");
+    CHECK(edge_ear_set_event_cb(ear, on_event, &endings) == EDGE_EAR_OK, "handler");
     CHECK(edge_ear_start(ear) == EDGE_EAR_OK, "start");
     CHECK(edge_ear_is_running(ear) == 1, "running");
     CHECK(edge_ear_start(ear) == EDGE_EAR_ALREADY_RUNNING, "start twice");
