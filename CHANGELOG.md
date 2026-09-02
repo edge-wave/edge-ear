@@ -5,6 +5,15 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 0.y release may break the public API.
 
+## [Unreleased]
+
+### Changed
+
+- capi: `edge_ear_on_event` is now `edge_ear_set_event_cb`. It only
+  ever held one handler at a time, replacing it on every call, so
+  `on_` overstated it: nothing here fans out to multiple listeners
+  (breaking).
+
 ## [0.3.0]
 
 ### Changed

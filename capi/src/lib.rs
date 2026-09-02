@@ -232,7 +232,7 @@ pub unsafe extern "C" fn edge_ear_read(
 ///            alive until the handle is freed
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_on_event(
+pub unsafe extern "C" fn edge_ear_set_event_cb(
     ear: edge_ear_h,
     callback: edge_ear_event_cb,
     user: *mut c_void,
