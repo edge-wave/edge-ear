@@ -11,7 +11,10 @@ repository = "https://github.com/edge-wave/edge-ear"
 authors = ["The edge-ear Authors"]
 
 [workspace.dependencies]
-edge-ear-core = { path = "core", version = "0.3.0" }
+# No backend by default. The backend is a trait, so each wrapper
+# names the one it wants through its own features; inheriting a
+# default here would pin every wrapper to cpal.
+edge-ear-core = { path = "core", version = "0.3.0", default-features = false }
 
 tinypipewire = { git = "https://github.com/tinyPipeWire/tinypipewire-rs", rev = "a0e006bc180e0235893bf4b0d8d30feb1e99c0e1", version = "0.1.0", default-features = false }
 cpal = "0.18.1"
