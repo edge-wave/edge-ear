@@ -450,3 +450,201 @@ impl AudioBackend for TinypipewireBackend {
         "tinypipewire"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn queued(block: Samples, sample_type: SampleType) -> Drain {
+        let queue = Arc::new(Ring::new(4));
+        queue.push(block);
+        Drain::new(queue, sample_type)
+    }
+
+    #[test]
+    fn what_did_not_fit_is_handed_over_next_time() {
+        let mut drain = queued(
+            Samples::I16((0..512).map(|n| n as i16).collect()),
+            SampleType::I16,
+        );
+
+        let mut first = [0u8; 512]; // 256 samples of i16
+        drain.fill(&mut first);
+        let mut second = [0u8; 512]; // remaining 256 samples of i16
+        drain.fill(&mut second);
+
+        let first_samples: Vec<i16> = first
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        let second_samples: Vec<i16> = second
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect();
+
+        assert_eq!(
+            first_samples[0], 0,
+            "the first buffer starts at the beginning"
+        );
+        assert_eq!(first_samples[255], 255, "end of first buffer");
+        assert_eq!(second_samples[0], 256, "the rest of the block follows it");
+        assert_eq!(second_samples[255], 511, "right to the end of it");
+    }
+
+    fn as_i16(bytes: &[u8]) -> Vec<i16> {
+        bytes
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect()
+    }
+
+    fn as_f32(bytes: &[u8]) -> Vec<f32> {
+        bytes
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
+    }
+
+    #[test]
+    fn a_speaker_of_any_sample_type_is_handed_every_sample() {
+        let mut drain = queued(Samples::I16(vec![16_000; 8]), SampleType::I16);
+        let mut room = [0u8; 16];
+        drain.fill(&mut room);
+        assert_eq!(as_i16(&room), vec![16_000; 8], "I16 -> I16");
+
+        let mut drain = queued(Samples::F32(vec![0.5; 8]), SampleType::I16);
+        let mut room = [0u8; 16];
+        drain.fill(&mut room);
+        assert_eq!(as_i16(&room), vec![16_383; 8], "F32 -> I16");
+
+        let mut drain = queued(Samples::F32(vec![0.5; 8]), SampleType::F32);
+        let mut room = [0u8; 32];
+        drain.fill(&mut room);
+        assert_eq!(as_f32(&room), vec![0.5; 8], "F32 -> F32");
+
+        let mut drain = queued(Samples::I16(vec![16_384; 8]), SampleType::F32);
+        let mut room = [0u8; 32];
+        drain.fill(&mut room);
+        assert_eq!(as_f32(&room), vec![0.5; 8], "I16 -> F32");
+    }
+
+    #[test]
+    fn a_short_f32_block_is_followed_by_silence_not_cut_in_half() {
+        let played: Vec<f32> = (1..=4).map(|n| n as f32 / 8.0).collect();
+        for source in [
+            Samples::F32(played.clone()),
+            Samples::I16(played.iter().map(|s| (s * 32768.0) as i16).collect()),
+        ] {
+            let mut drain = queued(source, SampleType::F32);
+            let mut room = [0xffu8; 32];
+            drain.fill(&mut room);
+
+            let mut expected = played.clone();
+            expected.resize(8, 0.0);
+            assert_eq!(as_f32(&room), expected);
+        }
+    }
+
+    #[test]
+    fn a_long_f32_block_carries_over_without_losing_samples() {
+        let played: Vec<f32> = (0..12).map(|n| n as f32 / 16.0).collect();
+        for source in [
+            Samples::F32(played.clone()),
+            Samples::I16(played.iter().map(|s| (s * 32768.0) as i16).collect()),
+        ] {
+            let mut drain = queued(source, SampleType::F32);
+            let mut first = [0u8; 32];
+            drain.fill(&mut first);
+            let mut second = [0u8; 16];
+            drain.fill(&mut second);
+
+            assert_eq!(as_f32(&first), played[..8]);
+            assert_eq!(as_f32(&second), played[8..]);
+        }
+    }
+
+    #[test]
+    fn a_dry_queue_is_silence_and_not_the_last_thing_played() {
+        let mut drain = Drain::new(Arc::new(Ring::new(4)), SampleType::I16);
+        let mut out = [123u8; 16];
+        drain.fill(&mut out);
+        assert!(out.iter().all(|s| *s == 0), "expected silence on dry queue");
+    }
+
+    #[test]
+    fn bytes_to_samples_round_trip() {
+        let original_i16: Vec<i16> = vec![0, 100, -200, 32767, -32768];
+        let bytes_i16: Vec<u8> = original_i16.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let samples_i16 = bytes_to_samples(&bytes_i16, SampleType::I16);
+        assert_eq!(samples_i16, Samples::I16(original_i16));
+
+        let original_f32: Vec<f32> = vec![0.0, 0.5, -0.5, 1.0, -1.0];
+        let bytes_f32: Vec<u8> = original_f32.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let samples_f32 = bytes_to_samples(&bytes_f32, SampleType::F32);
+        assert_eq!(samples_f32, Samples::F32(original_f32));
+    }
+
+    #[test]
+    fn error_mapping_translates_correctly() {
+        let err = map_tinypipewire_error(Device::Input, tinypipewire::Error::ConnectFailed);
+        assert!(matches!(
+            err,
+            Error::Backend {
+                device: Device::Input,
+                ..
+            }
+        ));
+
+        let err = map_tinypipewire_error(Device::Output, tinypipewire::Error::SourceUnavailable);
+        assert!(matches!(err, Error::NoDevice(Device::Output)));
+
+        let err = map_tinypipewire_error(Device::Input, tinypipewire::Error::InvalidArgument);
+        assert!(matches!(
+            err,
+            Error::Backend {
+                device: Device::Input,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn supported_formats_covers_standard_settings() {
+        let formats = supported_formats();
+        assert!(formats.iter().any(|f| f.covers(&AudioFormat::mono_16k())));
+        assert!(
+            formats
+                .iter()
+                .any(|f| f.covers(&AudioFormat::new(48_000, 2, SampleType::I16)))
+        );
+        assert!(
+            formats
+                .iter()
+                .any(|f| f.covers(&AudioFormat::new(44_100, 2, SampleType::F32)))
+        );
+        assert!(
+            formats
+                .iter()
+                .any(|f| f.covers(&AudioFormat::new(96_000, 1, SampleType::F32)))
+        );
+
+        // 3 channels is not covered
+        assert!(
+            !formats
+                .iter()
+                .any(|f| f.covers(&AudioFormat::new(16_000, 3, SampleType::I16)))
+        );
+        // 4000 Hz is below 8000 Hz minimum
+        assert!(
+            !formats
+                .iter()
+                .any(|f| f.covers(&AudioFormat::new(4_000, 1, SampleType::I16)))
+        );
+    }
+
+    #[test]
+    fn backend_description_is_tinypipewire() {
+        let backend = TinypipewireBackend::new().unwrap();
+        assert_eq!(backend.describe(), "tinypipewire");
+    }
+}
