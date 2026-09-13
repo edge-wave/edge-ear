@@ -17,6 +17,7 @@ default = ["cpal-backend"]
 # leaves the backend trait in place, so another implementation can take
 # over without dragging ALSA or CoreAudio in.
 cpal-backend = ["dep:cpal"]
+tinypipewire-backend = ["dep:tinypipewire"]
 
 [dependencies]
 cpal = { workspace = true, optional = true }
@@ -25,3 +26,8 @@ rubato.workspace = true
 symphonia.workspace = true
 thiserror.workspace = true
 ort.workspace = true
+
+# PipeWire only exists on Linux, so --all-features elsewhere must not try
+# to build the bindings.
+[target.'cfg(target_os = "linux")'.dependencies]
+tinypipewire = { workspace = true, optional = true }

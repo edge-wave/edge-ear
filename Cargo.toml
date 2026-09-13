@@ -13,6 +13,7 @@ authors = ["The edge-ear Authors"]
 [workspace.dependencies]
 edge-ear-core = { path = "core", version = "0.3.0" }
 
+tinypipewire = { git = "https://github.com/tinyPipeWire/tinypipewire-rs", rev = "a0e006bc180e0235893bf4b0d8d30feb1e99c0e1", version = "0.1.0", default-features = false }
 cpal = "0.18.1"
 rubato = "5.0.0"
 symphonia = { version = "0.6.1", default-features = false, features = [

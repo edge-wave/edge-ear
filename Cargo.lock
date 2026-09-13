@@ -236,6 +236,7 @@ dependencies = [
  "rubato",
  "symphonia",
  "thiserror 2.0.20",
+ "tinypipewire",
 ]
 
 [[package]]
@@ -1310,6 +1311,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "tinypipewire"
+version = "0.1.0"
+source = "git+https://github.com/tinyPipeWire/tinypipewire-rs?rev=a0e006bc180e0235893bf4b0d8d30feb1e99c0e1#a0e006bc180e0235893bf4b0d8d30feb1e99c0e1"
+dependencies = [
+ "tinypipewire-sys",
+]
+
+[[package]]
+name = "tinypipewire-sys"
+version = "0.1.0+tpw0.9.1"
+source = "git+https://github.com/tinyPipeWire/tinypipewire-rs?rev=a0e006bc180e0235893bf4b0d8d30feb1e99c0e1#a0e006bc180e0235893bf4b0d8d30feb1e99c0e1"
+dependencies = [
+ "pkg-config",
 ]
 
 [[package]]
