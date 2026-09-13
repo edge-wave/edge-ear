@@ -61,10 +61,35 @@ The ready-made wake word models are offered for non-commercial use, and
 this library is MIT or Apache-2.0, so it cannot pass them on. See
 [THIRD-PARTY-LICENSES](./THIRD-PARTY-LICENSES).
 
+## Backends
+
+The microphone and speaker sit behind a trait, so the device layer is
+swappable. Each wrapper names the one it wants at build time:
+
+| Feature | Reaches the devices through | Platforms |
+|---------|-----------------------------|-----------|
+| `cpal-backend` (default) | `cpal` | macOS, Linux |
+| `tinypipewire-backend` | PipeWire, natively | Linux |
+
+On Linux `cpal` already arrives at PipeWire through the ALSA
+compatibility layer. The native backend is for when that indirection is
+in the way: devices are named and numbered by the PipeWire graph, and
+buffers are negotiated with it directly.
+
+Exactly one is normally on. `EdgeEar::new()` takes cpal where it is
+compiled in and tinypipewire otherwise, so nothing above the trait
+changes:
+
+```bash
+cargo build -p edge-ear-core --no-default-features \
+  --features tinypipewire-backend
+```
+
 ## Building
 
 ```bash
 sudo apt install libasound2-dev pkg-config   # Linux; macOS needs nothing
+sudo apt install libpipewire-0.3-dev         # only for tinypipewire-backend
 cargo build --workspace
 cargo test --workspace
 ```
@@ -89,6 +114,10 @@ cargo run --example listen -- 30
 
 ```bash
 cd py && maturin develop
+
+# or against PipeWire
+cd py && maturin develop \
+  --no-default-features --features tinypipewire-backend
 ```
 
 ```python
