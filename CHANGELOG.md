@@ -7,6 +7,17 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 
 ## [Unreleased]
 
+### Added
+
+- A PipeWire backend, `tinypipewire-backend`, over `tinypipewire-rs`.
+  Devices are named and numbered by the PipeWire graph rather than by
+  ALSA. Linux only, and off by default.
+- `cpal-backend` and `tinypipewire-backend` features on `capi` and
+  `py`, so a C or Python build chooses its own device backend. Both
+  still default to `cpal-backend`. A crate inheriting `edge-ear-core`
+  from the workspace now gets no backend unless it names one, because
+  the workspace dependency no longer carries the default.
+
 ### Changed
 
 - capi: `edge_ear_on_event` is now `edge_ear_set_event_cb`. It only
