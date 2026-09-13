@@ -13,6 +13,14 @@ authors.workspace = true
 name = "edge_ear"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["cpal-backend"]
+# The device backend this extension module is built against. Exactly one is
+# normally on: core falls back to tinypipewire in `new()` only when
+# cpal is off.
+cpal-backend = ["edge-ear-core/cpal-backend"]
+tinypipewire-backend = ["edge-ear-core/tinypipewire-backend"]
+
 [dependencies]
 edge-ear-core.workspace = true
 pyo3 = { workspace = true, features = ["extension-module", "abi3-py39"] }

@@ -12,5 +12,13 @@ authors.workspace = true
 [lib]
 crate-type = ["rlib", "cdylib", "staticlib"]
 
+[features]
+default = ["cpal-backend"]
+# The device backend this C library is built against. Exactly one is
+# normally on: core falls back to tinypipewire in `new()` only when
+# cpal is off.
+cpal-backend = ["edge-ear-core/cpal-backend"]
+tinypipewire-backend = ["edge-ear-core/tinypipewire-backend"]
+
 [dependencies]
 edge-ear-core.workspace = true
