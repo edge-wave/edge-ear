@@ -24,11 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # PipeWire, meson and ninja build tinypipewire's C sources for
+      # clippy --all-features.
       - name: Install the audio headers
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev pkg-config
+          sudo apt-get install -y libasound2-dev libpipewire-0.3-dev meson ninja-build pkg-config
 
       # rust-toolchain.toml pins the version, so this only fetches it.
       - name: Fetch the pinned toolchain

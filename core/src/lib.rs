@@ -105,11 +105,33 @@ impl EdgeEar {
         Self::with_backend(Box::new(backend::cpal_backend::CpalBackend::new()))
     }
 
+    /// When cpal-backend is disabled but tinypipewire-backend is enabled,
+    /// tinypipewire is used as the default backend.
+    #[cfg(all(
+        not(feature = "cpal-backend"),
+        feature = "tinypipewire-backend",
+        target_os = "linux"
+    ))]
+    pub fn new() -> Result<Self> {
+        Self::with_tinypipewire()
+    }
+
     /// Without a device backend compiled in there is nothing to open,
     /// so a caller must supply one.
-    #[cfg(not(feature = "cpal-backend"))]
+    #[cfg(not(any(
+        feature = "cpal-backend",
+        all(feature = "tinypipewire-backend", target_os = "linux")
+    )))]
     pub fn new() -> Result<Self> {
         Err(Error::NoDevice(config::Device::Input))
+    }
+
+    /// Build a handle explicitly backed by tinypipewire.
+    #[cfg(all(feature = "tinypipewire-backend", target_os = "linux"))]
+    pub fn with_tinypipewire() -> Result<Self> {
+        Self::with_backend(Box::new(
+            backend::tinypipewire_backend::TinypipewireBackend::new()?,
+        ))
     }
 
     /// Build a handle over a supplied backend. This is how tests run

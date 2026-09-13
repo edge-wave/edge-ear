@@ -4,6 +4,8 @@ pub mod cpal_backend;
 /// against this library needs a microphone giving known audio on
 /// demand. It touches no hardware and reaches nothing outside.
 pub mod fake;
+#[cfg(all(feature = "tinypipewire-backend", target_os = "linux"))]
+pub mod tinypipewire_backend;
 
 use crate::capture::Samples;
 use crate::config::{AudioFormat, Device, SampleType};
