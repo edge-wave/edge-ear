@@ -57,6 +57,9 @@ pub enum edge_ear_error {
     /// A string was not valid UTF-8. It is refused rather than
     /// replaced or cut short.
     EDGE_EAR_NOT_UTF8 = -21,
+    /// Something else in this process already takes what is logged,
+    /// so the library cannot hand its own messages over.
+    EDGE_EAR_LOG_TAKEN = -22,
 }
 
 pub use edge_ear_error::*;

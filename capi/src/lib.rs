@@ -6,6 +6,7 @@
 mod convert;
 mod error;
 mod events;
+mod logging;
 
 use std::ffi::{CString, c_char, c_void};
 use std::path::Path;
@@ -19,6 +20,7 @@ use edge_ear_core::config::{AudioFormat, SampleType, Target};
 use convert::{duration, optional_str, out_ptr, required_str};
 use error::*;
 use events::{Registered, edge_ear_event_cb};
+use logging::{edge_ear_log_cb, edge_ear_log_level};
 
 /// What a handle points to. Opaque on the C side, which only ever
 /// names the pointer to this: `edge_ear_h`.
@@ -89,6 +91,41 @@ macro_rules! ok_or_return {
 #[unsafe(no_mangle)]
 pub extern "C" fn edge_ear_get_last_error() -> *const c_char {
     last_message()
+}
+
+// ---- logging ---------------------------------------------------
+
+/// @brief Send what the library logs to this callback.
+///
+/// Not tied to a handle: one callback takes the messages of the whole
+/// process, and setting another replaces it. It is called from
+/// whichever thread logged, including the ones reading the microphone
+/// and running the models, so it must stand being called from several
+/// at once and must return promptly. Nothing is logged per block of
+/// audio, and a repeating failure is logged once.
+///
+/// @param[in] callback where the messages go, or NULL to stop sending
+///            them
+/// @param[in] level how far down to go; the rest is dropped before it
+///            is even written out
+/// @param[in] user passed to the callback untouched; the caller keeps
+///            it alive until the callback is replaced or removed
+/// @return #EDGE_EAR_OK, or #EDGE_EAR_LOG_TAKEN when something else in
+///         this process already takes these messages.
+#[unsafe(no_mangle)]
+pub extern "C" fn edge_ear_set_log_cb(
+    callback: edge_ear_log_cb,
+    level: edge_ear_log_level,
+    user: *mut c_void,
+) -> i32 {
+    if logging::point_at(callback, level, user) {
+        OK
+    } else {
+        fail_with(
+            EDGE_EAR_LOG_TAKEN,
+            "something else in this process already takes the log",
+        )
+    }
 }
 
 // ---- handle ----------------------------------------------------

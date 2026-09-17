@@ -31,6 +31,48 @@
 #include <stdint.h>
 
 /**
+ * How much to hand over, most to least severe. Each level includes
+ * the ones above it.
+ */
+enum edge_ear_log_level
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : int32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * Nothing is handed over.
+     */
+    EDGE_EAR_LOG_OFF = 0,
+    /**
+     * Something failed.
+     */
+    EDGE_EAR_LOG_ERROR = 1,
+    /**
+     * Something is wrong but the library carried on.
+     */
+    EDGE_EAR_LOG_WARN = 2,
+    /**
+     * Devices opening, capture starting and stopping, the wake word.
+     */
+    EDGE_EAR_LOG_INFO = 3,
+    /**
+     * Detail for working out why something behaved as it did.
+     */
+    EDGE_EAR_LOG_DEBUG = 4,
+    /**
+     * Everything. Nothing is logged per block of audio even here.
+     */
+    EDGE_EAR_LOG_TRACE = 5,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum edge_ear_log_level edge_ear_log_level;
+#else
+typedef int32_t edge_ear_log_level;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * Which notification arrived.
  */
 enum edge_ear_event_kind
@@ -260,6 +302,11 @@ enum edge_ear_error
      * replaced or cut short.
      */
     EDGE_EAR_NOT_UTF8 = -21,
+    /**
+     * Something else in this process already takes what is logged,
+     * so the library cannot hand its own messages over.
+     */
+    EDGE_EAR_LOG_TAKEN = -22,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -274,6 +321,15 @@ typedef int32_t edge_ear_error;
  * names the pointer to this: `edge_ear_h`.
  */
 typedef struct edge_ear_handle edge_ear_handle;
+
+/**
+ * Called for every message the library logs. Both strings stop being
+ * valid when it returns, so anything kept must be copied first.
+ */
+typedef void (*edge_ear_log_cb)(edge_ear_log_level level,
+                                const char *target,
+                                const char *message,
+                                void *user);
 
 /**
  * The handle a C caller holds.
@@ -389,6 +445,27 @@ extern "C" {
  *         fails. Empty when nothing has failed yet.
  */
 const char *edge_ear_get_last_error(void);
+
+/**
+ * @brief Send what the library logs to this callback.
+ *
+ * Not tied to a handle: one callback takes the messages of the whole
+ * process, and setting another replaces it. It is called from
+ * whichever thread logged, including the ones reading the microphone
+ * and running the models, so it must stand being called from several
+ * at once and must return promptly. Nothing is logged per block of
+ * audio, and a repeating failure is logged once.
+ *
+ * @param[in] callback where the messages go, or NULL to stop sending
+ *            them
+ * @param[in] level how far down to go; the rest is dropped before it
+ *            is even written out
+ * @param[in] user passed to the callback untouched; the caller keeps
+ *            it alive until the callback is replaced or removed
+ * @return #EDGE_EAR_OK, or #EDGE_EAR_LOG_TAKEN when something else in
+ *         this process already takes these messages.
+ */
+int32_t edge_ear_set_log_cb(edge_ear_log_cb callback, edge_ear_log_level level, void *user);
 
 /**
  * @brief Make a handle.
