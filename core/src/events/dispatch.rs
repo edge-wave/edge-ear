@@ -3,6 +3,7 @@
 //! blocks delays later events and nothing else.
 
 use std::collections::VecDeque;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -161,10 +162,19 @@ fn run(shared: Arc<Shared>) {
         let handler = lock(&shared.handler).clone();
         if let Some(handler) = handler {
             if dropped > 0 {
-                handler(Event::EventsDropped { count: dropped });
+                deliver(&handler, Event::EventsDropped { count: dropped });
             }
-            handler(event);
+            deliver(&handler, event);
         }
+    }
+}
+
+/// Run the handler, surviving a panic in it. Unwinding out of here would
+/// end this thread, and every later event would be lost without a word.
+fn deliver(handler: &Handler, event: Event) {
+    let kind = event.kind();
+    if panic::catch_unwind(AssertUnwindSafe(|| handler(event))).is_err() {
+        log::error!("the event handler panicked on {kind}; later events are still delivered");
     }
 }
 
@@ -287,7 +297,9 @@ mod tests {
         let count = Arc::new(AtomicUsize::new(0));
         let seen = Arc::clone(&count);
         dispatcher.set_handler(Box::new(move |_| {
-            seen.fetch_add(1, Ordering::SeqCst);
+            if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                panic!("the first event makes the handler panic");
+            }
         }));
 
         dispatcher.emit(Event::WakeDetected { score: 0.1 });
