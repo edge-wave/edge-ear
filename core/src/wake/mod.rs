@@ -182,6 +182,8 @@ fn run<M: WakeSource>(
     dispatcher: Arc<Dispatcher>,
     on_wake: OnWake,
 ) {
+    // An inference failure is logged when it starts, not on every frame.
+    let mut failing = false;
     while !stop.load(Ordering::Relaxed) {
         // Short waits, so being told to stop is noticed even when no
         // audio is arriving.
@@ -208,6 +210,10 @@ fn run<M: WakeSource>(
 
         match detector.push(samples) {
             Ok((score, detected)) => {
+                if failing {
+                    log::info!("wake word detection works again");
+                    failing = false;
+                }
                 if let Some(score) = score {
                     scores.store(score.to_bits(), Ordering::Relaxed);
                 }
@@ -215,15 +221,22 @@ fn run<M: WakeSource>(
                     // Act first, tell the application second. The alert
                     // and the recording must not wait on a handler.
                     on_wake();
+                    log::info!("heard the wake word, score {:.3}", score.unwrap_or(0.0));
                     dispatcher.emit(Event::WakeDetected {
                         score: score.unwrap_or(0.0),
                     });
                 }
             }
-            Err(e) => dispatcher.emit(Event::DeviceError {
-                device: Device::Input,
-                message: e.to_string(),
-            }),
+            Err(e) => {
+                if !failing {
+                    log::error!("wake word detection failed: {e}");
+                    failing = true;
+                }
+                dispatcher.emit(Event::DeviceError {
+                    device: Device::Input,
+                    message: e.to_string(),
+                });
+            }
         }
     }
 }

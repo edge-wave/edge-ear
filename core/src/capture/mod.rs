@@ -250,6 +250,7 @@ fn run(
         match Converter::new(device_format, *format) {
             Ok(c) => converters.push(c),
             Err(e) => {
+                log::error!("capture cannot convert {device_format:?} to {format:?}: {e}");
                 dispatcher.emit(Event::DeviceError {
                     device: Device::Input,
                     message: e.to_string(),
@@ -273,12 +274,17 @@ fn run(
         .iter()
         .map(|c| FrameAccumulator::new(c.frame_samples))
         .collect();
+    log::debug!("capture thread running: device {device_format:?}, converting to {formats:?}");
+
+    // A conversion failure is logged when it starts, not on every block.
+    let mut converting_failed = false;
 
     while !stop.load(Ordering::Relaxed) {
         let block = match stream.read() {
             Ok(block) => block,
             Err(Error::Stopped) => break,
             Err(e) => {
+                log::error!("the microphone stopped delivering audio: {e}");
                 dispatcher.emit(Event::DeviceError {
                     device: Device::Input,
                     message: e.to_string(),
@@ -290,10 +296,15 @@ fn run(
 
         // Convert once per wanted format.
         let mut converted: Vec<Option<Samples>> = Vec::with_capacity(converters.len());
+        let mut failed_now = false;
         for converter in converters.iter_mut() {
             match converter.convert(&block) {
                 Ok(samples) => converted.push(Some(samples)),
                 Err(e) => {
+                    if !converting_failed {
+                        log::error!("captured audio could not be converted: {e}");
+                    }
+                    failed_now = true;
                     dispatcher.emit(Event::DeviceError {
                         device: Device::Input,
                         message: e.to_string(),
@@ -302,6 +313,10 @@ fn run(
                 }
             }
         }
+        if converting_failed && !failed_now {
+            log::info!("captured audio converts again");
+        }
+        converting_failed = failed_now;
 
         for (index, consumer) in consumers.iter().enumerate() {
             if !consumer.is_enabled() {
@@ -325,6 +340,7 @@ fn run(
     for consumer in &consumers {
         consumer.ring.close();
     }
+    log::debug!("capture thread finished");
 }
 
 #[cfg(test)]

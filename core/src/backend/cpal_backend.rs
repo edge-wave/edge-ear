@@ -428,7 +428,8 @@ impl AudioBackend for CpalBackend {
                             // block over and return; never wait here.
                             feed.push(data_to_samples(data, sample_format));
                         },
-                        |_err| {},
+                        // This runs on a device fault rather than per block, so logging is safe.
+                        |err| log::error!("microphone stream error: {err}"),
                         None,
                     );
 
@@ -505,7 +506,8 @@ impl AudioBackend for CpalBackend {
                             // gap sounds like a gap rather than a click.
                             fill_from_samples(data, sample_format, &mut drain);
                         },
-                        |_err| {},
+                        // This runs on a device fault rather than per block, so logging is safe.
+                        |err| log::error!("speaker stream error: {err}"),
                         None,
                     );
 

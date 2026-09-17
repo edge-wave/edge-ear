@@ -40,6 +40,9 @@ Set these to wait for a wake word rather than recording at once:
                            hearing it, so the same words are not heard
                            twice on their way out. default 20
 
+The library logs through the `log` crate. Set RUST_LOG to see it, for
+example RUST_LOG=debug. Only warnings and errors show by default.
+
 The wake score is shown beside the level meter as it is heard, whether
 or not it reached the threshold. Watch it while saying the wake word to
 see how close the model comes.
@@ -51,6 +54,8 @@ For example:
 ";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+
     let first = std::env::args().nth(1);
 
     if matches!(first.as_deref(), Some("help" | "-h" | "--help")) {

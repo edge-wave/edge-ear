@@ -507,6 +507,8 @@ fn run(
         open,
     } = shared;
     let mut detector = Detector::new(model, format);
+    // An inference failure is logged when it starts, not on every frame.
+    let mut failing = false;
 
     while !stop.load(Ordering::Relaxed) {
         // Short waits, so being told to stop is noticed promptly even
@@ -531,10 +533,12 @@ fn run(
 
         detector.set_history_limit(limits.pre_roll);
         if let Some((pre_roll, counting_now)) = opening {
+            log::debug!("recording opened: pre-roll {pre_roll:?}, counting silence {counting_now}");
             detector.open(pre_roll, counting_now);
             open.store(true, Ordering::Relaxed);
         }
         if counting {
+            log::debug!("the alert ended, so silence now counts");
             detector.start_counting();
         }
         if should_stop && let Some(done) = detector.stop() {
@@ -547,22 +551,38 @@ fn run(
         let Some(samples) = chunk.samples.as_i16() else {
             continue;
         };
-        match detector.push(samples, &limits) {
+        let result = detector.push(samples, &limits);
+        if failing && result.is_ok() {
+            log::info!("speech detection works again");
+            failing = false;
+        }
+        match result {
             Ok(Some(done)) => {
                 open.store(false, Ordering::Relaxed);
                 emit(&dispatcher, done);
             }
             Ok(None) => {}
-            Err(e) => dispatcher.emit(Event::DeviceError {
-                device: crate::config::Device::Input,
-                message: e.to_string(),
-            }),
+            Err(e) => {
+                if !failing {
+                    log::error!("speech detection failed: {e}");
+                    failing = true;
+                }
+                dispatcher.emit(Event::DeviceError {
+                    device: crate::config::Device::Input,
+                    message: e.to_string(),
+                });
+            }
         }
     }
     open.store(false, Ordering::Relaxed);
 }
 
 fn emit(dispatcher: &Dispatcher, done: Recording) {
+    log::info!(
+        "recording ended: {}, {:?} of audio",
+        done.reason,
+        done.duration
+    );
     dispatcher.emit(Event::SpeechEnded {
         audio: done.audio,
         sample_rate: done.sample_rate,
