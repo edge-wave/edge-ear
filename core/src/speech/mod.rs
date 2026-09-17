@@ -6,7 +6,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::capture::AudioChunk;
-use crate::capture::ring::Ring;
+use crate::capture::ring::{LossReport, Ring};
 use crate::config::{AudioFormat, TunableConfig};
 use crate::error::Result;
 use crate::events::dispatch::Dispatcher;
@@ -509,12 +509,16 @@ fn run(
     let mut detector = Detector::new(model, format);
     // An inference failure is logged when it starts, not on every frame.
     let mut failing = false;
+    let mut losses = LossReport::new("speech detection");
 
     while !stop.load(Ordering::Relaxed) {
         // Short waits, so being told to stop is noticed promptly even
         // when no audio is arriving.
         let chunk = match ring.take(Some(Duration::from_millis(50))) {
-            Ok(taken) => Some(taken.item),
+            Ok(taken) => {
+                losses.note(taken.dropped_before);
+                Some(taken.item)
+            }
             Err(crate::error::Error::Timeout) => None,
             Err(_) => break,
         };

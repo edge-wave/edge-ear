@@ -25,6 +25,9 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
   because one log covers the process, and it is called from whichever
   thread logged. A new `EDGE_EAR_LOG_TAKEN` says something else in the
   process already takes those messages.
+- core warns when the microphone queue or a detector falls behind and
+  loses audio. The first loss is reported at once and later ones are
+  totalled, at most one warning every five seconds.
 
 ### Fixed
 

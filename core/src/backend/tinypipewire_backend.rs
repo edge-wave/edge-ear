@@ -11,7 +11,7 @@ use tinypipewire::{AudioConfig, Routing, SampleFormat, Stream};
 use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
 use crate::backend::device_of;
 use crate::capture::Samples;
-use crate::capture::ring::Ring;
+use crate::capture::ring::{LossReport, Ring};
 use crate::config::{AudioFormat, Device, SampleType};
 use crate::error::{Error, Result};
 
@@ -264,6 +264,7 @@ impl Drain {
 /// An open PipeWire input stream.
 pub struct TinypipewireInput {
     queue: Arc<Ring<Samples>>,
+    losses: LossReport,
     format: AudioFormat,
     stream: Option<Stream>,
 }
@@ -274,7 +275,9 @@ impl InputStream for TinypipewireInput {
     }
 
     fn read(&mut self) -> Result<Samples> {
-        Ok(self.queue.take(None)?.item)
+        let taken = self.queue.take(None)?;
+        self.losses.note(taken.dropped_before);
+        Ok(taken.item)
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -385,6 +388,7 @@ impl AudioBackend for TinypipewireBackend {
 
         Ok(Box::new(TinypipewireInput {
             queue,
+            losses: LossReport::new("capture from the microphone"),
             format,
             stream: Some(stream),
         }))

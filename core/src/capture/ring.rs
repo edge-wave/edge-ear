@@ -188,11 +188,77 @@ impl<T> Ring<T> {
     }
 }
 
+/// How often a reader that keeps losing audio is reported.
+const LOSS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Turns a reader's losses into warnings: the first at once, later ones
+/// totalled per interval, so a reader that stays behind cannot flood the log.
+pub struct LossReport {
+    what: &'static str,
+    unreported: u64,
+    last: Option<Instant>,
+}
+
+impl LossReport {
+    pub const fn new(what: &'static str) -> Self {
+        Self {
+            what,
+            unreported: 0,
+            last: None,
+        }
+    }
+
+    /// Note what a take said was lost before it.
+    pub fn note(&mut self, dropped_before: u64) {
+        if dropped_before > 0 {
+            self.note_at(dropped_before, Instant::now());
+        }
+    }
+
+    /// Returns the total just reported, if this call reported one.
+    fn note_at(&mut self, dropped_before: u64, now: Instant) -> Option<u64> {
+        self.unreported += dropped_before;
+        if self.unreported == 0
+            || self
+                .last
+                .is_some_and(|at| now.duration_since(at) < LOSS_REPORT_INTERVAL)
+        {
+            return None;
+        }
+        let lost = std::mem::take(&mut self.unreported);
+        self.last = Some(now);
+        log::warn!("{} fell behind and lost {lost} blocks of audio", self.what);
+        Some(lost)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
     use std::thread;
+
+    #[test]
+    fn the_first_loss_is_reported_at_once() {
+        let mut report = LossReport::new("test");
+        assert_eq!(report.note_at(3, Instant::now()), Some(3));
+    }
+
+    #[test]
+    fn losses_inside_the_interval_are_totalled_for_later() {
+        let mut report = LossReport::new("test");
+        let start = Instant::now();
+        report.note_at(1, start);
+        assert_eq!(report.note_at(2, start + Duration::from_secs(1)), None);
+        assert_eq!(report.note_at(4, start + Duration::from_secs(2)), None);
+        assert_eq!(report.note_at(1, start + LOSS_REPORT_INTERVAL), Some(7));
+    }
+
+    #[test]
+    fn nothing_lost_is_never_reported() {
+        let mut report = LossReport::new("test");
+        assert_eq!(report.note_at(0, Instant::now()), None);
+    }
 
     #[test]
     fn delivers_in_order() {
