@@ -24,6 +24,7 @@ tinypipewire-backend = ["edge-ear-core/tinypipewire-backend"]
 [dependencies]
 edge-ear-core.workspace = true
 pyo3 = { workspace = true, features = ["extension-module", "abi3-py39"] }
+pyo3-log.workspace = true
 
 [build-dependencies]
 pyo3-build-config.workspace = true

@@ -35,3 +35,4 @@ ort = "=2.0.0-rc.13"
 
 pyo3 = "0.29.2"
 pyo3-build-config = "0.29.2"
+pyo3-log = "0.13.4"
