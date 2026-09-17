@@ -28,6 +28,9 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 
 ### Fixed
 
+- An event handler that panicked unwound out of the dispatcher thread
+  and ended it, so every later notification was lost without a trace.
+  The panic is caught and logged, and notifications keep arriving.
 - py: stopping or closing a handle held the interpreter lock while it
   waited for the threads it was stopping. A notification handler, or
   anything else those threads needed Python for, could not run until
