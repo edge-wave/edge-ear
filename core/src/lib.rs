@@ -181,7 +181,13 @@ impl EdgeEar {
             device: inner.config.fixed.input_device.clone(),
             wanted: inner.config.fixed.input_device_format,
         };
+        log::debug!(
+            "opening the microphone: device {:?}, format {:?}",
+            request.device,
+            request.wanted
+        );
         let stream = self.backend_lock().open_input(&request)?;
+        log::info!("microphone opened at {:?}", stream.format());
         inner.opened_input = Some(stream.format());
 
         let consumers = build_consumers(&inner.config, inner.wake_wanted, inner.speech_wanted);
@@ -264,7 +270,13 @@ impl EdgeEar {
                                     }
                                     // The alert was released since it
                                     // was named. Nothing to wait for.
-                                    Err(_) => speech.open_recording(pre_roll, true),
+                                    Err(_) => {
+                                        log::warn!(
+                                            "the alert {alert:?} is no longer registered, \
+                                             so the recording opens without it"
+                                        );
+                                        speech.open_recording(pre_roll, true)
+                                    }
                                 }
                             }
                             // Without one there is nothing to wait for.
@@ -286,6 +298,11 @@ impl EdgeEar {
         inner.consumers = consumers;
         inner.capture = Some(capture);
         inner.speech = Some(speech);
+        log::info!(
+            "capture started: wake word {}, speech {}",
+            if inner.wake_wanted { "on" } else { "off" },
+            if inner.speech_wanted { "on" } else { "off" }
+        );
         inner.wake = wake;
         inner.state = HandleState::Running;
         Ok(())
@@ -313,6 +330,7 @@ impl EdgeEar {
                 }
                 inner.consumers.clear();
                 inner.opened_input = None;
+                log::info!("capture stopped");
                 Ok(())
             }
         }
@@ -354,6 +372,11 @@ impl EdgeEar {
         // Checked now rather than at the next start, so a wrong path is
         // reported where it was given.
         WakeModel::new(spectrogram, features)?;
+        log::info!(
+            "wake word feature models loaded from {} and {}",
+            spectrogram.display(),
+            features.display()
+        );
         inner.wake_models = Some((spectrogram.to_path_buf(), features.to_path_buf()));
         Ok(())
     }
@@ -366,6 +389,7 @@ impl EdgeEar {
         let (spectrogram, features) = inner.wake_models.clone().ok_or(Error::NoWakeModel)?;
         let mut model = WakeModel::new(&spectrogram, &features)?;
         model.load_word(path)?;
+        log::info!("wake word model loaded from {}", path.display());
         inner.wake_word = Some(path.to_path_buf());
         Ok(())
     }
@@ -452,6 +476,7 @@ impl EdgeEar {
         // Pre-roll reaches back into audio already gone by, and is off
         // by default because most callers want only what follows.
         speech.open_recording(inner.config.tunable.pre_roll, true);
+        log::debug!("recording opened by the application");
         Ok(())
     }
 
@@ -464,6 +489,7 @@ impl EdgeEar {
             .as_ref()
             .ok_or(Error::NotRunning)?
             .stop_recording();
+        log::debug!("recording stopped by the application");
         Ok(())
     }
 
@@ -479,6 +505,7 @@ impl EdgeEar {
         if let Some(consumer) = inner.consumer(kind) {
             consumer.set_enabled(on);
         }
+        log::debug!("{kind:?} consumer turned {}", if on { "on" } else { "off" });
         Ok(())
     }
 
@@ -503,7 +530,9 @@ impl EdgeEar {
             .sounds
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .register(id.to_string(), source, volume, output)
+            .register(id.to_string(), source, volume, output)?;
+        log::debug!("sound {id:?} registered at volume {volume}");
+        Ok(())
     }
 
     /// Forget a sound and release the audio it held.
@@ -529,6 +558,7 @@ impl EdgeEar {
             .as_ref()
             .ok_or(Error::NoDevice(config::Device::Output))?;
         player.play(sound, repeat);
+        log::debug!("playing sound {id:?}, repeat {repeat}");
         Ok(())
     }
 
@@ -572,6 +602,11 @@ impl EdgeEar {
                 wanted: inner.config.fixed.output_device_format,
             }
         };
+        log::debug!(
+            "opening the speaker: device {:?}, format {:?}",
+            request.device,
+            request.wanted
+        );
         let stream = self.backend_lock().open_output(&request)?;
         let player = Arc::new(Player::start(stream, Arc::clone(&self.dispatcher))?);
         let format = player.format();
@@ -583,6 +618,7 @@ impl EdgeEar {
             return Ok(existing.format());
         }
         inner.player = Some(player);
+        log::info!("speaker opened at {format:?}");
         Ok(format)
     }
 
@@ -626,6 +662,7 @@ impl EdgeEar {
                 .clear();
         }
         self.dispatcher.shutdown();
+        log::info!("handle destroyed");
     }
 
     // ── events ───────────────────────────────────────────────────────
@@ -691,6 +728,7 @@ impl EdgeEar {
         // Every tunable is set through here, so this is the one place
         // the shared copy has to be kept in step.
         *inner.tunable.lock().unwrap_or_else(|e| e.into_inner()) = inner.config.tunable.clone();
+        log::debug!("settings now {:?}", inner.config.tunable);
         Ok(())
     }
 

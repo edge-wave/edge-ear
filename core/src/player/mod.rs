@@ -206,7 +206,8 @@ fn run(
                             return;
                         }
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        log::error!("the speaker stopped taking audio, so playback ended: {e}");
                         let _ = stream.stop();
                         return;
                     }
@@ -217,6 +218,7 @@ fn run(
         // Only a sound that ran to its own end is reported. A sound the
         // application stopped never gets here.
         if let Some(id) = ended_id {
+            log::debug!("sound {id:?} finished");
             if let Some(hook) = hooks.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
                 hook(&id);
             }

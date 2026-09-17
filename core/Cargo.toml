@@ -29,5 +29,8 @@ ort.workspace = true
 
 # PipeWire only exists on Linux, so --all-features elsewhere must not try
 # to build the bindings.
+[dev-dependencies]
+env_logger.workspace = true
+
 [target.'cfg(target_os = "linux")'.dependencies]
 tinypipewire = { workspace = true, optional = true }

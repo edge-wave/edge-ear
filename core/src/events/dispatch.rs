@@ -79,13 +79,19 @@ impl Dispatcher {
         if queue.closed {
             return;
         }
+        let mut first_drop = false;
         if queue.items.len() >= queue.capacity {
             queue.items.pop_front();
             queue.dropped += 1;
+            first_drop = queue.dropped == 1;
         }
         queue.items.push_back(event);
         drop(queue);
         self.shared.ready.notify_one();
+        // This warns once per run of drops, so a stuck handler cannot flood the log.
+        if first_drop {
+            log::warn!("the event queue is full, so the oldest events are being dropped");
+        }
     }
 
     #[cfg(test)]

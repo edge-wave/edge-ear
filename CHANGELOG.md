@@ -5,6 +5,15 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 0.y release may break the public API.
 
+## [Unreleased]
+
+### Added
+
+- core logs through the `log` crate: devices opening, capture starting
+  and stopping, the wake word, recordings ending, and failures in the
+  capture, detection and playback threads. Nothing is logged per audio
+  block, and a repeating failure is logged once.
+
 ## [0.4.0]
 
 ### Added
