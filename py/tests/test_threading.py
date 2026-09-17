@@ -5,6 +5,7 @@ that delivers notifications holds the lock only for the length of a
 handler. A read lets go of the lock while it waits.
 """
 
+import logging
 import threading
 import time
 
@@ -137,3 +138,30 @@ def test_events_arrive_as_their_own_classes():
         assert isinstance(event, edge_ear.SoundFinished)
         assert isinstance(event, edge_ear.AudioEvent)
         assert event.id == "beep"
+
+
+def test_a_worker_logging_does_not_wedge_stop(caplog):
+    """Stopping waits for threads that log, so it lets go of the lock.
+
+    The capture thread logs on its way out, and that message has to
+    reach Python. If stop held the lock through the wait, the two would
+    hold each other: stop waits for the thread, the thread for the lock.
+    """
+    with caplog.at_level(logging.DEBUG, logger="edge_ear"):
+        # The levels are cached, so a change made here is seen only
+        # after the cache is dropped.
+        edge_ear.reset_logging()
+
+        ear = edge_ear.EdgeEar()
+        ear.start()
+
+        stopping = threading.Thread(target=ear.stop)
+        stopping.start()
+        stopping.join(timeout=10)
+        assert not stopping.is_alive(), "stop never returned"
+        ear.close()
+
+    names = {record.name for record in caplog.records}
+    assert any(name.startswith("edge_ear") for name in names), (
+        f"nothing core logged reached Python, saw {names}"
+    )

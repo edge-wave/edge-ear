@@ -16,6 +16,17 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 - A worker thread that panics now says so, rather than leaving the
   audio to stop with nothing to explain it. A failed start says what
   refused it, on the PipeWire backend as on cpal.
+- py: what core logs arrives through Python's `logging`, on loggers
+  under `edge_ear`. Levels are remembered so the audio threads stay off
+  the interpreter lock; `edge_ear.reset_logging()` drops what was
+  remembered when the Python side changes them.
+
+### Fixed
+
+- py: stopping or closing a handle held the interpreter lock while it
+  waited for the threads it was stopping. A notification handler, or
+  anything else those threads needed Python for, could not run until
+  the wait ended, and the wait ended only once it had.
 
 ## [0.4.0]
 

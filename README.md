@@ -128,6 +128,20 @@ with EdgeEar() as ear:
     chunk = ear.read()
 ```
 
+What the library logs arrives through Python's own `logging`, on
+loggers under `edge_ear`:
+
+```python
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+```
+
+Levels are read once and remembered, so the audio threads need not
+reach into Python to find out whether a message would be printed.
+Changing them after the library has logged something needs
+`edge_ear.reset_logging()`.
+
 ## Licence
 
 MIT or Apache-2.0, your choice.

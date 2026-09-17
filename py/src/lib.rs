@@ -1,9 +1,10 @@
 //! Python binding for edge-ear. Binds the core crate directly, adding
-//! no behaviour. The interpreter lock is taken only on the thread
-//! delivering notifications, and a read releases it while waiting.
+//! no behaviour beyond handing what core logs to Python's `logging`.
+//! The interpreter lock is held only where Python itself is touched:
+//! every call that waits on a device or a thread lets go of it.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use pyo3::exceptions::PyException;
@@ -37,6 +38,32 @@ pyo3::create_exception!(edge_ear, Timeout, EdgeEarError);
 pyo3::create_exception!(edge_ear, Stopped, EdgeEarError);
 pyo3::create_exception!(edge_ear, BackendError, EdgeEarError);
 pyo3::create_exception!(edge_ear, ConversionError, EdgeEarError);
+
+/// Held so the cached levels can be dropped when Python's own change.
+static LOG_RESET: OnceLock<pyo3_log::ResetHandle> = OnceLock::new();
+
+/// Hand what core logs to Python's `logging`, under the `edge_ear`
+/// logger. Levels are cached on this side so the audio threads stay
+/// off the interpreter lock; `reset_logging` clears that cache.
+fn install_logging(py: Python<'_>) -> PyResult<()> {
+    let logger =
+        pyo3_log::Logger::new(py, pyo3_log::Caching::LoggersAndLevels)?.set_prefix("edge_ear");
+    // An application that installed its own logger keeps it, and core
+    // then logs wherever that one sends it.
+    if let Ok(handle) = logger.install() {
+        let _ = LOG_RESET.set(handle);
+    }
+    Ok(())
+}
+
+/// Look at the Python logging levels again. Needed only when they are
+/// changed after this module has already logged something.
+#[pyfunction]
+fn reset_logging() {
+    if let Some(handle) = LOG_RESET.get() {
+        handle.reset();
+    }
+}
 
 fn to_py(error: Error) -> PyErr {
     let text = error.to_string();
@@ -375,16 +402,18 @@ impl EdgeEar {
 
     // ── lifecycle ────────────────────────────────────────────────────
 
-    fn start(&self) -> PyResult<()> {
-        self.core.start().map_err(to_py)
+    // These wait on the worker threads, and a worker that logs needs
+    // the interpreter lock, so it is released for the wait.
+    fn start(&self, py: Python<'_>) -> PyResult<()> {
+        py.detach(|| self.core.start()).map_err(to_py)
     }
 
-    fn stop(&self) -> PyResult<()> {
-        self.core.stop().map_err(to_py)
+    fn stop(&self, py: Python<'_>) -> PyResult<()> {
+        py.detach(|| self.core.stop()).map_err(to_py)
     }
 
-    fn close(&self) {
-        self.core.destroy();
+    fn close(&self, py: Python<'_>) {
+        py.detach(|| self.core.destroy());
     }
 
     #[getter]
@@ -397,10 +426,10 @@ impl EdgeEar {
     }
 
     #[pyo3(signature = (*_args))]
-    fn __exit__(&self, _args: &Bound<'_, PyAny>) -> bool {
+    fn __exit__(&self, py: Python<'_>, _args: &Bound<'_, PyAny>) -> bool {
         // Leaving the block releases the devices, even when the block
         // is leaving because something went wrong.
-        self.core.destroy();
+        py.detach(|| self.core.destroy());
         false
     }
 
@@ -745,6 +774,14 @@ impl EdgeEar {
     }
 }
 
+impl Drop for EdgeEar {
+    fn drop(&mut self) {
+        // Reached with the interpreter lock held, and releasing the
+        // devices waits on threads that log, so let go of it first.
+        Python::try_attach(|py| py.detach(|| self.core.destroy()));
+    }
+}
+
 fn wanted_format(
     sample_rate: Option<u32>,
     channels: u16,
@@ -814,6 +851,8 @@ fn edge_ear(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<EndReasonNames>()?;
 
     let py = m.py();
+    install_logging(py)?;
+    m.add_function(wrap_pyfunction!(reset_logging, m)?)?;
     m.add("EdgeEarError", py.get_type::<EdgeEarError>())?;
     m.add("NotRunning", py.get_type::<NotRunning>())?;
     m.add("AlreadyRunning", py.get_type::<AlreadyRunning>())?;
