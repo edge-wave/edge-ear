@@ -7,6 +7,18 @@
 
 #include "edge_ear.h"
 
+static const char *const level_names[] = {
+    "off", "error", "warn", "info", "debug", "trace"
+};
+
+static void on_log(edge_ear_log_level level, const char *target,
+                   const char *message, void *user)
+{
+    (void)target;
+    (void)user;
+    fprintf(stderr, "%s: %s\n", level_names[level], message);
+}
+
 static void on_event(const edge_ear_event *event, void *user)
 {
     (void)user;
@@ -31,6 +43,9 @@ static void on_event(const edge_ear_event *event, void *user)
 
 int main(int argc, char **argv)
 {
+    /* Warnings and errors only. Raise it to see the library at work. */
+    edge_ear_set_log_cb(on_log, EDGE_EAR_LOG_WARN, NULL);
+
     edge_ear_h ear = edge_ear_new();
     if (!ear) {
         fprintf(stderr, "could not open a device: %s\n", edge_ear_get_last_error());

@@ -22,3 +22,4 @@ tinypipewire-backend = ["edge-ear-core/tinypipewire-backend"]
 
 [dependencies]
 edge-ear-core.workspace = true
+log.workspace = true

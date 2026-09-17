@@ -22,8 +22,19 @@ static void on_event(const edge_ear_event *event, void *user)
     if (event->kind == EDGE_EAR_EVENT_SPEECH_ENDED) *seen += 1;
 }
 
+static void on_log(edge_ear_log_level level, const char *target,
+                   const char *message, void *user)
+{
+    int *seen = (int *)user;
+    if (target != NULL && message != NULL && level != EDGE_EAR_LOG_OFF) *seen += 1;
+}
+
 int main(void)
 {
+    int logged = 0;
+    CHECK(edge_ear_set_log_cb(on_log, EDGE_EAR_LOG_DEBUG, &logged) == EDGE_EAR_OK,
+          "log callback");
+
     CHECK(edge_ear_start(NULL) == EDGE_EAR_NULL_ARGUMENT, "null start");
     CHECK(edge_ear_is_running(NULL) == EDGE_EAR_NULL_ARGUMENT, "null is_running");
     edge_ear_free(NULL);
@@ -152,6 +163,10 @@ int main(void)
     CHECK(edge_ear_stop(ear) == EDGE_EAR_OK, "stop");
     CHECK(edge_ear_is_running(ear) == 0, "stopped");
     edge_ear_free(ear);
+
+    CHECK(logged > 0, "the library logged something");
+    CHECK(edge_ear_set_log_cb(NULL, EDGE_EAR_LOG_OFF, NULL) == EDGE_EAR_OK,
+          "log callback removed");
 
     if (failures == 0) {
         printf("every entry point behaved\n");

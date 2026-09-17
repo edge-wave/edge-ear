@@ -20,6 +20,11 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
   under `edge_ear`. Levels are remembered so the audio threads stay off
   the interpreter lock; `edge_ear.reset_logging()` drops what was
   remembered when the Python side changes them.
+- capi: `edge_ear_set_log_cb` hands what the library logs to the
+  application, with the level to stop at. It is not tied to a handle,
+  because one log covers the process, and it is called from whichever
+  thread logged. A new `EDGE_EAR_LOG_TAKEN` says something else in the
+  process already takes those messages.
 
 ### Fixed
 
