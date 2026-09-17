@@ -478,7 +478,7 @@ impl SpeechThread {
         self.stop.store(true, Ordering::Relaxed);
         let worker = self.worker.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(worker) = worker {
-            let _ = worker.join();
+            crate::join_worker(worker, "speech");
         }
     }
 

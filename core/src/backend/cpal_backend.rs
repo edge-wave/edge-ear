@@ -222,7 +222,7 @@ impl InputStream for CpalInput {
         self.gate.signal_stop();
         self.queue.close();
         if let Some(owner) = self.owner.take() {
-            let _ = owner.join();
+            crate::join_worker(owner, "microphone device");
         }
         Ok(())
     }
@@ -257,7 +257,7 @@ impl OutputStream for CpalOutput {
         self.gate.signal_stop();
         self.queue.close();
         if let Some(owner) = self.owner.take() {
-            let _ = owner.join();
+            crate::join_worker(owner, "speaker device");
         }
         Ok(())
     }
@@ -458,7 +458,7 @@ impl AudioBackend for CpalBackend {
 
         if let Err(e) = wait_for_start(rx, Device::Input) {
             gate.signal_stop();
-            let _ = owner.join();
+            crate::join_worker(owner, "microphone device");
             return Err(e);
         }
 
@@ -536,7 +536,7 @@ impl AudioBackend for CpalBackend {
 
         if let Err(e) = wait_for_start(rx, Device::Output) {
             gate.signal_stop();
-            let _ = owner.join();
+            crate::join_worker(owner, "speaker device");
             return Err(e);
         }
 

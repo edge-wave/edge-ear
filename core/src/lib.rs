@@ -21,6 +21,7 @@ pub use player::registry::{SoundId, SoundSource};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::JoinHandle;
 
 use std::time::Duration;
 
@@ -175,7 +176,7 @@ impl EdgeEar {
             HandleState::Running => return Err(Error::AlreadyRunning),
             HandleState::Created => {}
         }
-        inner.config.validate()?;
+        note_failure("the settings cannot be used", inner.config.validate())?;
 
         let request = FormatRequest {
             device: inner.config.fixed.input_device.clone(),
@@ -186,24 +187,32 @@ impl EdgeEar {
             request.device,
             request.wanted
         );
-        let stream = self.backend_lock().open_input(&request)?;
+        let stream = note_failure(
+            "the microphone would not open",
+            self.backend_lock().open_input(&request),
+        )?;
         log::info!("microphone opened at {:?}", stream.format());
         inner.opened_input = Some(stream.format());
 
         let consumers = build_consumers(&inner.config, inner.wake_wanted, inner.speech_wanted);
-        let capture =
-            CaptureThread::start(stream, consumers.clone(), Arc::clone(&self.dispatcher))?;
+        let capture = note_failure(
+            "the capture thread would not start",
+            CaptureThread::start(stream, consumers.clone(), Arc::clone(&self.dispatcher)),
+        )?;
 
         let speech_ring = consumers
             .iter()
             .find(|c| c.kind == ConsumerKind::Speech)
             .map(|c| Arc::clone(&c.ring))
             .expect("a speech consumer is always built");
-        let speech = Arc::new(SpeechThread::start(
-            speech_ring,
-            inner.config.fixed.speech_format,
-            Arc::clone(&inner.tunable),
-            Arc::clone(&self.dispatcher),
+        let speech = Arc::new(note_failure(
+            "the speech thread would not start",
+            SpeechThread::start(
+                speech_ring,
+                inner.config.fixed.speech_format,
+                Arc::clone(&inner.tunable),
+                Arc::clone(&self.dispatcher),
+            ),
         )?);
 
         // Here rather than in the application's handler, so a slow one
@@ -222,8 +231,11 @@ impl EdgeEar {
 
         let wake = match (&inner.wake_models, &inner.wake_word) {
             (Some((spectrogram, features)), Some(word)) => {
-                let mut model = WakeModel::new(spectrogram, features)?;
-                model.load_word(word)?;
+                let mut model = note_failure(
+                    "the wake word feature models would not load",
+                    WakeModel::new(spectrogram, features),
+                )?;
+                note_failure("the wake word would not load", model.load_word(word))?;
                 let detector = WakeDetector::new(
                     model,
                     inner.config.tunable.wake_threshold,
@@ -285,11 +297,9 @@ impl EdgeEar {
                     }) as wake::OnWake
                 };
 
-                Some(Arc::new(WakeThread::start(
-                    detector,
-                    ring,
-                    Arc::clone(&self.dispatcher),
-                    on_wake,
+                Some(Arc::new(note_failure(
+                    "the wake word thread would not start",
+                    WakeThread::start(detector, ring, Arc::clone(&self.dispatcher), on_wake),
                 )?))
             }
             _ => None,
@@ -607,8 +617,14 @@ impl EdgeEar {
             request.device,
             request.wanted
         );
-        let stream = self.backend_lock().open_output(&request)?;
-        let player = Arc::new(Player::start(stream, Arc::clone(&self.dispatcher))?);
+        let stream = note_failure(
+            "the speaker would not open",
+            self.backend_lock().open_output(&request),
+        )?;
+        let player = Arc::new(note_failure(
+            "the playback thread would not start",
+            Player::start(stream, Arc::clone(&self.dispatcher)),
+        )?);
         let format = player.format();
 
         let mut inner = self.alive_mut()?;
@@ -989,6 +1005,23 @@ pub(crate) fn describe_offered(offered: &[SupportedFormat]) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Wait for a worker and say so if it panicked. Nothing else reports
+/// it: the thread simply stops, and the audio stops with it.
+pub(crate) fn join_worker(worker: JoinHandle<()>, what: &str) {
+    if worker.join().is_err() {
+        log::error!("the {what} thread panicked");
+    }
+}
+
+/// Say why something failed on the way up. The caller is told as well,
+/// but the log would otherwise stop at the attempt.
+fn note_failure<T>(what: &str, result: Result<T>) -> Result<T> {
+    if let Err(e) = &result {
+        log::warn!("{what}: {e}");
+    }
+    result
 }
 
 /// What the end of an alert means to the recording behind it, whether

@@ -119,7 +119,7 @@ impl Dispatcher {
                 // told to stop and will exit once this handler returns.
                 return;
             }
-            let _ = handle.join();
+            crate::join_worker(handle, "event dispatch");
         }
     }
 }

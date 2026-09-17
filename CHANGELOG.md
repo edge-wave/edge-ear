@@ -13,6 +13,9 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
   and stopping, the wake word, recordings ending, and failures in the
   capture, detection and playback threads. Nothing is logged per audio
   block, and a repeating failure is logged once.
+- A worker thread that panics now says so, rather than leaving the
+  audio to stop with nothing to explain it. A failed start says what
+  refused it, on the PipeWire backend as on cpal.
 
 ## [0.4.0]
 
