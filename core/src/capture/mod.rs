@@ -217,7 +217,7 @@ impl CaptureThread {
             ring.close();
         }
         if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+            crate::join_worker(worker, "capture");
         }
     }
 }

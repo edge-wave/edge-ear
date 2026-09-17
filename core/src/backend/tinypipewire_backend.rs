@@ -279,7 +279,9 @@ impl InputStream for TinypipewireInput {
 
     fn stop(&mut self) -> Result<()> {
         if let Some(stream) = self.stream.take() {
-            let _ = stream.stop(false);
+            if let Err(e) = stream.stop(false) {
+                log::error!("the microphone stream would not stop: {e}");
+            }
             drop(stream);
         }
         self.queue.close();
@@ -312,7 +314,9 @@ impl OutputStream for TinypipewireOutput {
 
     fn stop(&mut self) -> Result<()> {
         if let Some(stream) = self.stream.take() {
-            let _ = stream.stop(true);
+            if let Err(e) = stream.stop(true) {
+                log::error!("the speaker stream would not stop: {e}");
+            }
             drop(stream);
         }
         self.queue.close();
@@ -352,6 +356,14 @@ impl AudioBackend for TinypipewireBackend {
             }
         })
         .map_err(|e| map_tinypipewire_error(Device::Input, e))?;
+
+        // This runs when the source is lost rather than per block, so
+        // logging is safe. Losing the report is not worth failing over.
+        if let Err(e) =
+            stream.set_error_callback(|err| log::error!("microphone stream error: {err}"))
+        {
+            log::warn!("the microphone stream will not report faults: {e}");
+        }
 
         if let Some(ref target) = target {
             stream
@@ -402,6 +414,13 @@ impl AudioBackend for TinypipewireBackend {
             buf.set_filled(avail);
         })
         .map_err(|e| map_tinypipewire_error(Device::Output, e))?;
+
+        // This runs when the sink is lost rather than per block, so
+        // logging is safe. Losing the report is not worth failing over.
+        if let Err(e) = stream.set_error_callback(|err| log::error!("speaker stream error: {err}"))
+        {
+            log::warn!("the speaker stream will not report faults: {e}");
+        }
 
         if let Some(ref target) = target {
             stream
