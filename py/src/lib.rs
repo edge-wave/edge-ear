@@ -262,6 +262,8 @@ impl SoundFinished {
     }
 }
 
+/// A device, or the work behind it, failed. One that repeats is
+/// reported once rather than for every block of audio.
 #[pyclass(frozen, extends = AudioEvent)]
 pub struct DeviceError {
     /// "input" or "output".

@@ -567,14 +567,16 @@ fn run(
             }
             Ok(None) => {}
             Err(e) => {
+                // Told once when it starts, not for every frame: a
+                // failure that repeats would fill the event queue.
                 if !failing {
                     log::error!("speech detection failed: {e}");
                     failing = true;
+                    dispatcher.emit(Event::DeviceError {
+                        device: crate::config::Device::Input,
+                        message: e.to_string(),
+                    });
                 }
-                dispatcher.emit(Event::DeviceError {
-                    device: crate::config::Device::Input,
-                    message: e.to_string(),
-                });
             }
         }
     }
