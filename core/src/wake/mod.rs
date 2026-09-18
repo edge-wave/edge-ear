@@ -232,14 +232,16 @@ fn run<M: WakeSource>(
                 }
             }
             Err(e) => {
+                // Told once when it starts, not for every frame: a
+                // failure that repeats would fill the event queue.
                 if !failing {
                     log::error!("wake word detection failed: {e}");
                     failing = true;
+                    dispatcher.emit(Event::DeviceError {
+                        device: Device::Input,
+                        message: e.to_string(),
+                    });
                 }
-                dispatcher.emit(Event::DeviceError {
-                    device: Device::Input,
-                    message: e.to_string(),
-                });
             }
         }
     }
@@ -253,7 +255,7 @@ mod tests {
     use crate::events::dispatch::DEFAULT_QUEUE_CAPACITY;
     use crate::wake::model::ScriptedWake;
     use std::sync::Mutex;
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::time::Instant;
 
     const FRAME: usize = 1280;
@@ -382,6 +384,46 @@ mod tests {
         assert!(!push(&mut d).1, "0.6 is under 0.9");
         d.set_threshold(0.5);
         assert!(push(&mut d).1, "0.6 is over 0.5");
+    }
+
+    /// A failure that repeats is told once. Every frame would fill the
+    /// event queue by itself and push everything else out of it.
+    #[test]
+    fn a_detector_that_keeps_failing_is_told_about_once() {
+        let ring = Arc::new(Ring::new(64));
+        let dispatcher = Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY));
+        let errors = Arc::new(AtomicUsize::new(0));
+
+        let seen = Arc::clone(&errors);
+        dispatcher.set_handler(Box::new(move |event| {
+            if matches!(event, Event::DeviceError { .. }) {
+                seen.fetch_add(1, Ordering::SeqCst);
+            }
+        }));
+
+        let thread = WakeThread::start(
+            detector(ScriptedWake::always_failing(), 0.5, 20),
+            Arc::clone(&ring),
+            Arc::clone(&dispatcher),
+            Box::new(|| {}) as OnWake,
+        )
+        .unwrap();
+
+        for _ in 0..8 {
+            ring.push(chunk());
+        }
+        assert!(
+            wait_until(|| errors.load(Ordering::SeqCst) == 1),
+            "the first failure was never reported"
+        );
+        // Long enough for the other seven to have been refused too.
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            errors.load(Ordering::SeqCst),
+            1,
+            "reported again for frames after the first"
+        );
+        thread.shutdown();
     }
 
     /// What happens the moment it counts must happen before the

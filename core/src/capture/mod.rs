@@ -301,14 +301,16 @@ fn run(
             match converter.convert(&block) {
                 Ok(samples) => converted.push(Some(samples)),
                 Err(e) => {
+                    // Told once when it starts, not for every block: a
+                    // failure that repeats would fill the event queue.
                     if !converting_failed {
                         log::error!("captured audio could not be converted: {e}");
+                        dispatcher.emit(Event::DeviceError {
+                            device: Device::Input,
+                            message: e.to_string(),
+                        });
                     }
                     failed_now = true;
-                    dispatcher.emit(Event::DeviceError {
-                        device: Device::Input,
-                        message: e.to_string(),
-                    });
                     converted.push(None);
                 }
             }

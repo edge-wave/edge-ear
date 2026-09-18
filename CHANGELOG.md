@@ -31,6 +31,9 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 
 ### Fixed
 
+- A failure that repeated raised a device notification for every block
+  of audio, filling the event queue and pushing everything else out of
+  it. It is now reported once, as the log already was.
 - An event handler that panicked unwound out of the dispatcher thread
   and ended it, so every later notification was lost without a trace.
   The panic is caught and logged, and notifications keep arriving.

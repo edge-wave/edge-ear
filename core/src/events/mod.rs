@@ -61,6 +61,8 @@ pub enum Event {
     SoundFinished {
         id: String,
     },
+    /// A device, or the work behind it, failed. One that repeats is
+    /// reported once rather than for every block of audio.
     DeviceError {
         device: Device,
         message: String,

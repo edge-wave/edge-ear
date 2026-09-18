@@ -16,7 +16,8 @@ pub enum edge_ear_event_kind {
     /// A sound reached its own end. One that was stopped does not
     /// arrive here.
     EDGE_EAR_EVENT_SOUND_FINISHED,
-    /// A device failed. Capture has stopped.
+    /// A device, or the work behind it, failed. One that repeats is
+    /// reported once rather than for every block of audio.
     EDGE_EAR_EVENT_DEVICE_ERROR,
     /// Notifications were thrown away because a handler could not
     /// keep up.

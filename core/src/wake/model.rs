@@ -270,6 +270,7 @@ pub struct ScriptedWake {
     script: Vec<Option<f32>>,
     position: usize,
     pub resets: usize,
+    fails: bool,
 }
 
 #[cfg(test)]
@@ -279,6 +280,15 @@ impl ScriptedWake {
             script,
             position: 0,
             resets: 0,
+            fails: false,
+        }
+    }
+
+    /// Fails on every frame, as a model whose session has gone would.
+    pub fn always_failing() -> Self {
+        Self {
+            fails: true,
+            ..Self::new(Vec::new())
         }
     }
 
@@ -303,6 +313,11 @@ impl ScriptedWake {
 #[cfg(test)]
 impl WakeSource for ScriptedWake {
     fn push(&mut self, _frame: &[i16]) -> Result<Option<f32>> {
+        if self.fails {
+            return Err(Error::Conversion {
+                reason: "the scripted model fails on every frame".to_string(),
+            });
+        }
         let answer = self
             .script
             .get(self.position)
