@@ -60,6 +60,8 @@ pub enum edge_ear_error {
     /// Something else in this process already takes what is logged,
     /// so the library cannot hand its own messages over.
     EDGE_EAR_LOG_TAKEN = -22,
+    /// No wake word is loaded under that name.
+    EDGE_EAR_UNKNOWN_WAKE_WORD = -23,
 }
 
 pub use edge_ear_error::*;
@@ -84,6 +86,7 @@ pub fn code_of(error: &Error) -> edge_ear_error {
         Error::PermissionDenied => EDGE_EAR_PERMISSION_DENIED,
         Error::DeviceLost(_) => EDGE_EAR_DEVICE_LOST,
         Error::UnknownSound(_) => EDGE_EAR_UNKNOWN_SOUND,
+        Error::UnknownWakeWord(_) => EDGE_EAR_UNKNOWN_WAKE_WORD,
         Error::Timeout => EDGE_EAR_TIMEOUT,
         Error::Stopped => EDGE_EAR_STOPPED,
         Error::Backend { .. } => EDGE_EAR_BACKEND,

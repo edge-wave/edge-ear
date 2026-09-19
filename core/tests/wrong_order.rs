@@ -2,6 +2,7 @@
 //! order is normal behaviour, not misuse: each must return its own
 //! named error and none may crash, hang, or wedge the handle.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use edge_ear_core::Samples;
@@ -55,6 +56,17 @@ fn every_entry_point() -> Vec<Call> {
             e.set_ring_capacity(Duration::from_secs(2))
         }),
         call("set_wake_threshold", |e| e.set_wake_threshold(0.5)),
+        call("add_wake_model", |e| {
+            e.add_wake_model("w", Path::new("w.onnx"))
+        }),
+        call("remove_wake_model", |e| e.remove_wake_model("w")),
+        call("set_wake_word_threshold", |e| {
+            e.set_wake_word_threshold("w", Some(0.5))
+        }),
+        call("wake_word_threshold", |e| {
+            e.wake_word_threshold("w").map(|_| ())
+        }),
+        call("wake_score", |e| e.wake_score("w").map(|_| ())),
         call("set_speech_threshold", |e| e.set_speech_threshold(0.5)),
         call("set_silence_duration", |e| {
             e.set_silence_duration(Duration::from_secs(1))

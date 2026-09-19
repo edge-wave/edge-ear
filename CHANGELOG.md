@@ -5,6 +5,31 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 0.y release may break the public API.
 
+## [Unreleased]
+
+### Added
+
+- Several wake words can be listened for at once. Each is added under a
+  name with `add_wake_model` and removed with `remove_wake_model`. The
+  spectrogram and feature models run once per frame for all of them, so
+  each extra word costs only its own small model. When two words are
+  heard in the same frame, only the one with the higher score is
+  reported. Each word can have its own threshold through
+  `set_wake_word_threshold`, and `set_wake_threshold` covers the rest.
+  C and Python have the same calls, and a new `UnknownWakeWord` error
+  (`EDGE_EAR_UNKNOWN_WAKE_WORD` in C) names a word that was never added.
+
+### Changed
+
+- `load_wake_model(path)` is replaced by `add_wake_model(name, path)`,
+  in C as `edge_ear_add_wake_model` (breaking).
+- `Event::WakeDetected` carries the `word` that was heard. The C event
+  gains a `word` field at its end, and Python's `WakeDetected` gains a
+  `word` attribute (breaking).
+- `wake_score` takes the name of the word to report on. In C,
+  `edge_ear_get_wake_score` takes it too. In Python it is now a method
+  instead of a property (breaking).
+
 ## [0.5.0]
 
 ### Added

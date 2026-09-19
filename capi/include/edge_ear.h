@@ -308,6 +308,10 @@ enum edge_ear_error
      * so the library cannot hand its own messages over.
      */
     EDGE_EAR_LOG_TAKEN = -22,
+    /**
+     * No wake word is loaded under that name.
+     */
+    EDGE_EAR_UNKNOWN_WAKE_WORD = -23,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -385,6 +389,10 @@ typedef struct {
      * because a handler could not keep up.
      */
     uint64_t dropped;
+    /**
+     * Wake detected: the name the word heard was added under.
+     */
+    const char *word;
 } edge_ear_event;
 
 /**
@@ -564,22 +572,49 @@ int32_t edge_ear_set_event_cb(edge_ear_h ear, edge_ear_event_cb callback, void *
  * @param[in] spectrogram path to the melspectrogram model
  * @param[in] features path to the speech embedding model
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
- * @see edge_ear_load_wake_model
+ * @see edge_ear_add_wake_model
  */
 int32_t edge_ear_load_wake_features(edge_ear_h ear, const char *spectrogram, const char *features);
 
 /**
- * @brief Supply the model for the phrase to listen for.
+ * @brief Add a phrase to listen for, under a name.
  *
- * Its shape is checked here, and a model built for another pipeline is
+ * Several can be listened for at once, and the two shared models run
+ * once for all of them. A detection carries the name of the word
+ * heard. Adding under a name already in use replaces that word. Its
+ * shape is checked here, and a model built for another pipeline is
  * refused by name of what was wrong.
  *
  * @param[in] ear the handle
+ * @param[in] name what detections of this word are called
  * @param[in] path path to the wake word model
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_load_wake_features, edge_ear_enable_wake
  */
-int32_t edge_ear_load_wake_model(edge_ear_h ear, const char *path);
+int32_t edge_ear_add_wake_model(edge_ear_h ear, const char *name, const char *path);
+
+/**
+ * @brief Stop listening for one phrase and forget its model.
+ *
+ * @param[in] ear the handle
+ * @param[in] name the name it was added under
+ * @return #EDGE_EAR_OK, #EDGE_EAR_UNKNOWN_WAKE_WORD, or another
+ *         negative #edge_ear_error.
+ * @see edge_ear_add_wake_model
+ */
+int32_t edge_ear_remove_wake_model(edge_ear_h ear, const char *name);
+
+/**
+ * @brief The names of the words listened for, in the order added.
+ *
+ * @param[in] ear the handle
+ * @param[out] names where the list goes, borrowed until the next call
+ *             to this function on this handle
+ * @param[out] count how many names the list holds
+ * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+ * @see edge_ear_add_wake_model
+ */
+int32_t edge_ear_get_wake_models(edge_ear_h ear, const char *const **names, uintptr_t *count);
 
 /**
  * @brief Start listening for the wake word.
@@ -625,18 +660,19 @@ int32_t edge_ear_is_wake_enabled(edge_ear_h ear);
 int32_t edge_ear_reset_wake(edge_ear_h ear);
 
 /**
- * @brief How sure the detector was, most recently.
+ * @brief How sure the detector was of one word, most recently.
  *
  * Every score, not only the ones that counted, because choosing a
  * threshold is guesswork without seeing the near misses.
  *
  * @param[in] ear the handle
+ * @param[in] word the name the word was added under
  * @param[out] score where the score goes, from 0.0 to 1.0
- * @return #EDGE_EAR_OK, or #EDGE_EAR_NOT_RUNNING when nothing has
- *         scored yet.
- * @see edge_ear_set_wake_threshold
+ * @return #EDGE_EAR_OK, #EDGE_EAR_NOT_RUNNING when nothing has scored
+ *         yet, or #EDGE_EAR_UNKNOWN_WAKE_WORD.
+ * @see edge_ear_set_wake_word_threshold
  */
-int32_t edge_ear_get_wake_score(edge_ear_h ear, float *score);
+int32_t edge_ear_get_wake_score(edge_ear_h ear, const char *word, float *score);
 
 /**
  * @brief The sound played on detection.
@@ -652,12 +688,51 @@ int32_t edge_ear_get_wake_alert(edge_ear_h ear, const char **alert);
 /**
  * @brief How sure the detector must be before it says it heard.
  *
+ * Applies to every word not given a threshold of its own.
+ *
  * @param[in] ear the handle
  * @param[in] value from 0.0 to 1.0
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
- * @see edge_ear_get_wake_score
+ * @see edge_ear_set_wake_word_threshold, edge_ear_get_wake_score
  */
 int32_t edge_ear_set_wake_threshold(edge_ear_h ear, float value);
+
+/**
+ * @brief Give one word a threshold of its own.
+ *
+ * Changeable while running.
+ *
+ * @param[in] ear the handle
+ * @param[in] word the name the word was added under
+ * @param[in] value from 0.0 to 1.0
+ * @return #EDGE_EAR_OK, #EDGE_EAR_UNKNOWN_WAKE_WORD, or another
+ *         negative #edge_ear_error.
+ * @see edge_ear_unset_wake_word_threshold, edge_ear_set_wake_threshold
+ */
+int32_t edge_ear_set_wake_word_threshold(edge_ear_h ear, const char *word, float value);
+
+/**
+ * @brief Hold one word to the shared threshold again.
+ *
+ * @param[in] ear the handle
+ * @param[in] word the name the word was added under
+ * @return #EDGE_EAR_OK, #EDGE_EAR_UNKNOWN_WAKE_WORD, or another
+ *         negative #edge_ear_error.
+ * @see edge_ear_set_wake_word_threshold
+ */
+int32_t edge_ear_unset_wake_word_threshold(edge_ear_h ear, const char *word);
+
+/**
+ * @brief The threshold one word is held to, its own or the shared one.
+ *
+ * @param[in] ear the handle
+ * @param[in] word the name the word was added under
+ * @param[out] value where the threshold goes
+ * @return #EDGE_EAR_OK, #EDGE_EAR_UNKNOWN_WAKE_WORD, or another
+ *         negative #edge_ear_error.
+ * @see edge_ear_set_wake_word_threshold
+ */
+int32_t edge_ear_get_wake_word_threshold(edge_ear_h ear, const char *word, float *value);
 
 /**
  * @brief How long to look away after hearing the word.
