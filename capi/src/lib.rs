@@ -39,6 +39,8 @@ pub type edge_ear_h = *mut edge_ear_handle;
 #[derive(Default)]
 struct Borrowed {
     alert: Option<CString>,
+    wake_names: Vec<CString>,
+    wake_listed: Vec<*const c_char>,
     devices: Vec<CString>,
     listed: Vec<edge_ear_device>,
     formats: Vec<edge_ear_format>,
@@ -290,7 +292,7 @@ pub unsafe extern "C" fn edge_ear_set_event_cb(
 /// @param[in] spectrogram path to the melspectrogram model
 /// @param[in] features path to the speech embedding model
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
-/// @see edge_ear_load_wake_model
+/// @see edge_ear_add_wake_model
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_load_wake_features(
     ear: edge_ear_h,
@@ -304,20 +306,75 @@ pub unsafe extern "C" fn edge_ear_load_wake_features(
     })
 }
 
-/// @brief Supply the model for the phrase to listen for.
+/// @brief Add a phrase to listen for, under a name.
 ///
-/// Its shape is checked here, and a model built for another pipeline is
+/// Several can be listened for at once, and the two shared models run
+/// once for all of them. A detection carries the name of the word
+/// heard. Adding under a name already in use replaces that word. Its
+/// shape is checked here, and a model built for another pipeline is
 /// refused by name of what was wrong.
 ///
 /// @param[in] ear the handle
+/// @param[in] name what detections of this word are called
 /// @param[in] path path to the wake word model
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_load_wake_features, edge_ear_enable_wake
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_load_wake_model(ear: edge_ear_h, path: *const c_char) -> i32 {
+pub unsafe extern "C" fn edge_ear_add_wake_model(
+    ear: edge_ear_h,
+    name: *const c_char,
+    path: *const c_char,
+) -> i32 {
     with!(ear, e => {
+        let name = ok_or_return!(required_str(name, "the wake word name"));
         let path = ok_or_return!(required_str(path, "the model path"));
-        report(e.core.load_wake_model(Path::new(path)))
+        report(e.core.add_wake_model(name, Path::new(path)))
+    })
+}
+
+/// @brief Stop listening for one phrase and forget its model.
+///
+/// @param[in] ear the handle
+/// @param[in] name the name it was added under
+/// @return #EDGE_EAR_OK, #EDGE_EAR_UNKNOWN_WAKE_WORD, or another
+///         negative #edge_ear_error.
+/// @see edge_ear_add_wake_model
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_remove_wake_model(ear: edge_ear_h, name: *const c_char) -> i32 {
+    with!(ear, e => {
+        let name = ok_or_return!(required_str(name, "the wake word name"));
+        report(e.core.remove_wake_model(name))
+    })
+}
+
+/// @brief The names of the words listened for, in the order added.
+///
+/// @param[in] ear the handle
+/// @param[out] names where the list goes, borrowed until the next call
+///             to this function on this handle
+/// @param[out] count how many names the list holds
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_add_wake_model
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_get_wake_models(
+    ear: edge_ear_h,
+    names: *mut *const *const c_char,
+    count: *mut usize,
+) -> i32 {
+    with!(ear, e => {
+        let names = ok_or_return!(out_ptr(names, "names"));
+        let count = ok_or_return!(out_ptr(count, "count"));
+        let mut held = e.borrowed.lock().unwrap_or_else(|e| e.into_inner());
+        held.wake_names = e
+            .core
+            .wake_models()
+            .into_iter()
+            .filter_map(|n| CString::new(n).ok())
+            .collect();
+        held.wake_listed = held.wake_names.iter().map(|n| n.as_ptr()).collect();
+        *names = held.wake_listed.as_ptr();
+        *count = held.wake_listed.len();
+        OK
     })
 }
 
@@ -371,23 +428,30 @@ pub unsafe extern "C" fn edge_ear_reset_wake(ear: edge_ear_h) -> i32 {
     with!(ear, e => report(e.core.reset_wake()))
 }
 
-/// @brief How sure the detector was, most recently.
+/// @brief How sure the detector was of one word, most recently.
 ///
 /// Every score, not only the ones that counted, because choosing a
 /// threshold is guesswork without seeing the near misses.
 ///
 /// @param[in] ear the handle
+/// @param[in] word the name the word was added under
 /// @param[out] score where the score goes, from 0.0 to 1.0
-/// @return #EDGE_EAR_OK, or #EDGE_EAR_NOT_RUNNING when nothing has
-///         scored yet.
-/// @see edge_ear_set_wake_threshold
+/// @return #EDGE_EAR_OK, #EDGE_EAR_NOT_RUNNING when nothing has scored
+///         yet, or #EDGE_EAR_UNKNOWN_WAKE_WORD.
+/// @see edge_ear_set_wake_word_threshold
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_get_wake_score(ear: edge_ear_h, score: *mut f32) -> i32 {
+pub unsafe extern "C" fn edge_ear_get_wake_score(
+    ear: edge_ear_h,
+    word: *const c_char,
+    score: *mut f32,
+) -> i32 {
     with!(ear, e => {
+        let word = ok_or_return!(required_str(word, "the wake word name"));
         let score = ok_or_return!(out_ptr(score, "score"));
-        match e.core.wake_score() {
-            Some(value) => { *score = value; OK }
-            None => fail_with(EDGE_EAR_NOT_RUNNING, "nothing has been scored yet"),
+        match e.core.wake_score(word) {
+            Ok(Some(value)) => { *score = value; OK }
+            Ok(None) => fail_with(EDGE_EAR_NOT_RUNNING, "nothing has been scored yet"),
+            Err(err) => fail(&err),
         }
     })
 }
@@ -413,13 +477,79 @@ pub unsafe extern "C" fn edge_ear_get_wake_alert(
 
 /// @brief How sure the detector must be before it says it heard.
 ///
+/// Applies to every word not given a threshold of its own.
+///
 /// @param[in] ear the handle
 /// @param[in] value from 0.0 to 1.0
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
-/// @see edge_ear_get_wake_score
+/// @see edge_ear_set_wake_word_threshold, edge_ear_get_wake_score
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_set_wake_threshold(ear: edge_ear_h, value: f32) -> i32 {
     with!(ear, e => report(e.core.set_wake_threshold(value)))
+}
+
+/// @brief Give one word a threshold of its own.
+///
+/// Changeable while running.
+///
+/// @param[in] ear the handle
+/// @param[in] word the name the word was added under
+/// @param[in] value from 0.0 to 1.0
+/// @return #EDGE_EAR_OK, #EDGE_EAR_UNKNOWN_WAKE_WORD, or another
+///         negative #edge_ear_error.
+/// @see edge_ear_unset_wake_word_threshold, edge_ear_set_wake_threshold
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_wake_word_threshold(
+    ear: edge_ear_h,
+    word: *const c_char,
+    value: f32,
+) -> i32 {
+    with!(ear, e => {
+        let word = ok_or_return!(required_str(word, "the wake word name"));
+        report(e.core.set_wake_word_threshold(word, Some(value)))
+    })
+}
+
+/// @brief Hold one word to the shared threshold again.
+///
+/// @param[in] ear the handle
+/// @param[in] word the name the word was added under
+/// @return #EDGE_EAR_OK, #EDGE_EAR_UNKNOWN_WAKE_WORD, or another
+///         negative #edge_ear_error.
+/// @see edge_ear_set_wake_word_threshold
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_unset_wake_word_threshold(
+    ear: edge_ear_h,
+    word: *const c_char,
+) -> i32 {
+    with!(ear, e => {
+        let word = ok_or_return!(required_str(word, "the wake word name"));
+        report(e.core.set_wake_word_threshold(word, None))
+    })
+}
+
+/// @brief The threshold one word is held to, its own or the shared one.
+///
+/// @param[in] ear the handle
+/// @param[in] word the name the word was added under
+/// @param[out] value where the threshold goes
+/// @return #EDGE_EAR_OK, #EDGE_EAR_UNKNOWN_WAKE_WORD, or another
+///         negative #edge_ear_error.
+/// @see edge_ear_set_wake_word_threshold
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_get_wake_word_threshold(
+    ear: edge_ear_h,
+    word: *const c_char,
+    value: *mut f32,
+) -> i32 {
+    with!(ear, e => {
+        let word = ok_or_return!(required_str(word, "the wake word name"));
+        let value = ok_or_return!(out_ptr(value, "value"));
+        match e.core.wake_word_threshold(word) {
+            Ok(found) => { *value = found; OK }
+            Err(err) => fail(&err),
+        }
+    })
 }
 
 /// @brief How long to look away after hearing the word.

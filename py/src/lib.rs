@@ -34,6 +34,7 @@ pyo3::create_exception!(edge_ear, NoDevice, EdgeEarError);
 pyo3::create_exception!(edge_ear, PermissionDenied, EdgeEarError);
 pyo3::create_exception!(edge_ear, DeviceLost, EdgeEarError);
 pyo3::create_exception!(edge_ear, UnknownSound, EdgeEarError);
+pyo3::create_exception!(edge_ear, UnknownWakeWord, EdgeEarError);
 pyo3::create_exception!(edge_ear, Timeout, EdgeEarError);
 pyo3::create_exception!(edge_ear, Stopped, EdgeEarError);
 pyo3::create_exception!(edge_ear, BackendError, EdgeEarError);
@@ -85,6 +86,7 @@ fn to_py(error: Error) -> PyErr {
         Error::PermissionDenied => PermissionDenied::new_err(text),
         Error::DeviceLost(_) => DeviceLost::new_err(text),
         Error::UnknownSound(_) => UnknownSound::new_err(text),
+        Error::UnknownWakeWord(_) => UnknownWakeWord::new_err(text),
         Error::Timeout => Timeout::new_err(text),
         Error::Stopped => Stopped::new_err(text),
         Error::Backend { .. } => BackendError::new_err(text),
@@ -205,13 +207,18 @@ pub struct AudioEvent;
 #[pyclass(frozen, extends = AudioEvent)]
 pub struct WakeDetected {
     #[pyo3(get)]
+    word: String,
+    #[pyo3(get)]
     score: f32,
 }
 
 #[pymethods]
 impl WakeDetected {
     fn __repr__(&self) -> String {
-        format!("WakeDetected(score={:.3})", self.score)
+        format!(
+            "WakeDetected(word={:?}, score={:.3})",
+            self.word, self.score
+        )
     }
 }
 
@@ -327,8 +334,8 @@ fn reason_name(reason: EndReason) -> String {
 /// is taken.
 fn event_to_py(py: Python<'_>, event: Event) -> PyResult<Py<PyAny>> {
     Ok(match event {
-        Event::WakeDetected { score } => {
-            Py::new(py, (WakeDetected { score }, AudioEvent))?.into_any()
+        Event::WakeDetected { word, score } => {
+            Py::new(py, (WakeDetected { word, score }, AudioEvent))?.into_any()
         }
         Event::SpeechEnded {
             audio,
@@ -495,9 +502,21 @@ impl EdgeEar {
             .map_err(to_py)
     }
 
-    /// Supply the model for the phrase to listen for.
-    fn load_wake_model(&self, path: PathBuf) -> PyResult<()> {
-        self.core.load_wake_model(&path).map_err(to_py)
+    /// Add a phrase to listen for, under the name its detections carry.
+    /// Several can be listened for at once.
+    fn add_wake_model(&self, name: &str, path: PathBuf) -> PyResult<()> {
+        self.core.add_wake_model(name, &path).map_err(to_py)
+    }
+
+    /// Stop listening for one phrase and forget its model.
+    fn remove_wake_model(&self, name: &str) -> PyResult<()> {
+        self.core.remove_wake_model(name).map_err(to_py)
+    }
+
+    /// The names of the words listened for, in the order they were added.
+    #[getter]
+    fn wake_models(&self) -> Vec<String> {
+        self.core.wake_models()
     }
 
     /// Start listening for the wake word. Naming a sound plays it on
@@ -521,11 +540,10 @@ impl EdgeEar {
         self.core.wake_alert()
     }
 
-    /// How sure the detector was, most recently. Every score, because
-    /// setting a threshold is guesswork without seeing the near misses.
-    #[getter]
-    fn wake_score(&self) -> Option<f32> {
-        self.core.wake_score()
+    /// How sure the detector was of one word, most recently. Every
+    /// score, because a threshold is guesswork without the near misses.
+    fn wake_score(&self, word: &str) -> PyResult<Option<f32>> {
+        self.core.wake_score(word).map_err(to_py)
     }
 
     /// Forget what has been heard, so a fresh utterance is needed.
@@ -533,8 +551,21 @@ impl EdgeEar {
         self.core.reset_wake().map_err(to_py)
     }
 
+    /// The threshold for every word not given one of its own.
     fn set_wake_threshold(&self, value: f32) -> PyResult<()> {
         self.core.set_wake_threshold(value).map_err(to_py)
+    }
+
+    /// Give one word its own threshold, or `None` to share the common one.
+    fn set_wake_word_threshold(&self, word: &str, value: Option<f32>) -> PyResult<()> {
+        self.core
+            .set_wake_word_threshold(word, value)
+            .map_err(to_py)
+    }
+
+    /// The threshold one word is held to, its own or the shared one.
+    fn wake_word_threshold(&self, word: &str) -> PyResult<f32> {
+        self.core.wake_word_threshold(word).map_err(to_py)
     }
 
     /// Frames of 80 ms to look away for after hearing the wake word.
@@ -871,6 +902,7 @@ fn edge_ear(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("PermissionDenied", py.get_type::<PermissionDenied>())?;
     m.add("DeviceLost", py.get_type::<DeviceLost>())?;
     m.add("UnknownSound", py.get_type::<UnknownSound>())?;
+    m.add("UnknownWakeWord", py.get_type::<UnknownWakeWord>())?;
     m.add("Timeout", py.get_type::<Timeout>())?;
     m.add("Stopped", py.get_type::<Stopped>())?;
     m.add("BackendError", py.get_type::<BackendError>())?;

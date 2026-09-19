@@ -1,6 +1,7 @@
 //! Spotting a wake word in three stages: audio to spectrogram, then to
 //! speech features, then to a yes or no. Only the last knows the
-//! phrase. Names inside a model are read, never assumed.
+//! phrase, so several phrases share the first two stages. Names inside
+//! a model are read, never assumed.
 
 use std::path::{Path, PathBuf};
 
@@ -98,9 +99,9 @@ impl Stage {
 /// Behind a trait so that when a score counts, and what happens then,
 /// are testable without three model files in the way.
 pub trait WakeSource: Send {
-    /// Feed one frame of audio. Gives a score once enough has been
-    /// heard to give one.
-    fn push(&mut self, frame: &[i16]) -> Result<Option<f32>>;
+    /// Feed one frame of audio. Gives one score per word, in the order
+    /// the words were added, once enough has been heard.
+    fn push(&mut self, frame: &[i16]) -> Result<Option<Vec<f32>>>;
 
     /// Forget everything heard so far.
     fn reset(&mut self);
@@ -110,8 +111,8 @@ pub trait WakeSource: Send {
 pub struct WakeModel {
     spectrogram: Stage,
     features: Stage,
-    /// The wake word itself. Absent until an application supplies one.
-    word: Option<Stage>,
+    /// The wake words, in the order they were added.
+    words: Vec<Stage>,
     /// Audio kept so the next spectrogram call has its lead-in.
     audio_tail: Vec<f32>,
     mel: Vec<f32>,
@@ -126,19 +127,19 @@ impl WakeModel {
         Ok(Self {
             spectrogram: Stage::load(spectrogram, "spectrogram")?,
             features: Stage::load(features, "feature")?,
-            word: None,
+            words: Vec::new(),
             audio_tail: vec![0.0; SPECTROGRAM_CONTEXT],
             mel: Vec::new(),
             speech: Vec::new(),
         })
     }
 
-    /// Load the model for the phrase to listen for. Its shape is
+    /// Add the model for one more phrase to listen for. Its shape is
     /// checked here rather than left to fail oddly later, and a model
     /// for another pipeline is refused by name of what was wrong.
     /// A model that left its batch dimension open is taken as it is,
     /// since one window is fed at a time either way.
-    pub fn load_word(&mut self, path: &Path) -> Result<()> {
+    pub fn add_word(&mut self, path: &Path) -> Result<()> {
         let stage = Stage::load(path, "wake word")?;
 
         let expected = [1i64, FEATURE_WINDOW as i64, FEATURE_WIDTH as i64];
@@ -159,18 +160,18 @@ impl WakeModel {
             });
         }
 
-        self.word = Some(stage);
+        self.words.push(stage);
         self.clear();
         Ok(())
     }
 
     #[cfg(test)]
-    pub fn has_word(&self) -> bool {
-        self.word.is_some()
+    pub fn word_count(&self) -> usize {
+        self.words.len()
     }
 
-    fn feed(&mut self, frame: &[i16]) -> Result<Option<f32>> {
-        if self.word.is_none() {
+    fn feed(&mut self, frame: &[i16]) -> Result<Option<Vec<f32>>> {
+        if self.words.is_empty() {
             return Err(Error::NoWakeModel);
         }
         if frame.len() != FRAME_SAMPLES {
@@ -234,20 +235,25 @@ impl WakeModel {
         Ok(true)
     }
 
-    fn score(&mut self) -> Result<Option<f32>> {
+    /// Score the same window of features once for every word.
+    fn score(&mut self) -> Result<Option<Vec<f32>>> {
         let window = FEATURE_WINDOW * FEATURE_WIDTH;
         if self.speech.len() < window {
             return Ok(None);
         }
-        let recent = self.speech[self.speech.len() - window..].to_vec();
-        let word = self.word.as_mut().expect("checked by the caller");
-        let (_, values) = word.run(vec![1, FEATURE_WINDOW as i64, FEATURE_WIDTH as i64], recent)?;
-        Ok(values.first().copied())
+        let recent = &self.speech[self.speech.len() - window..];
+        let shape = vec![1, FEATURE_WINDOW as i64, FEATURE_WIDTH as i64];
+        let mut scores = Vec::with_capacity(self.words.len());
+        for word in &mut self.words {
+            let (_, values) = word.run(shape.clone(), recent.to_vec())?;
+            scores.push(values.first().copied().unwrap_or(0.0));
+        }
+        Ok(Some(scores))
     }
 }
 
 impl WakeSource for WakeModel {
-    fn push(&mut self, frame: &[i16]) -> Result<Option<f32>> {
+    fn push(&mut self, frame: &[i16]) -> Result<Option<Vec<f32>>> {
         self.feed(frame)
     }
 
@@ -267,7 +273,7 @@ pub struct ScriptedWake {
     /// One answer per call, in order. `None` stands for "not enough
     /// heard yet", which is what a cleared pipeline gives while it
     /// refills. Once used up, the last answer repeats.
-    script: Vec<Option<f32>>,
+    script: Vec<Option<Vec<f32>>>,
     position: usize,
     pub resets: usize,
     fails: bool,
@@ -275,7 +281,13 @@ pub struct ScriptedWake {
 
 #[cfg(test)]
 impl ScriptedWake {
+    /// One word, scored as the script says.
     pub fn new(script: Vec<Option<f32>>) -> Self {
+        Self::words(script.into_iter().map(|s| s.map(|s| vec![s])).collect())
+    }
+
+    /// Several words, with one score each in every answer.
+    pub fn words(script: Vec<Option<Vec<f32>>>) -> Self {
         Self {
             script,
             position: 0,
@@ -312,7 +324,7 @@ impl ScriptedWake {
 
 #[cfg(test)]
 impl WakeSource for ScriptedWake {
-    fn push(&mut self, _frame: &[i16]) -> Result<Option<f32>> {
+    fn push(&mut self, _frame: &[i16]) -> Result<Option<Vec<f32>>> {
         if self.fails {
             return Err(Error::Conversion {
                 reason: "the scripted model fails on every frame".to_string(),
@@ -321,8 +333,8 @@ impl WakeSource for ScriptedWake {
         let answer = self
             .script
             .get(self.position)
-            .copied()
-            .or_else(|| self.script.last().copied())
+            .or_else(|| self.script.last())
+            .cloned()
             .unwrap_or(None);
         self.position += 1;
         Ok(answer)
@@ -419,7 +431,7 @@ mod tests {
             "features:    {} -> {}",
             model.features.input, model.features.output
         );
-        assert!(!model.has_word(), "no wake word until one is supplied");
+        assert_eq!(model.word_count(), 0, "no wake word until one is supplied");
     }
 
     /// The names differ from one wake word to the next, so a name in
@@ -445,9 +457,9 @@ mod tests {
             }
             let mut model = shared(&dir).unwrap();
             model
-                .load_word(&path)
+                .add_word(&path)
                 .unwrap_or_else(|e| panic!("{word}: {e}"));
-            let stage = model.word.as_ref().unwrap();
+            let stage = &model.words[0];
             println!("{word:<24} {} -> {}", stage.input, stage.output);
             names.push((stage.input.clone(), stage.output.clone()));
         }
@@ -470,7 +482,7 @@ mod tests {
 
         // The spectrogram model is a model, but not a wake word one.
         let err = model
-            .load_word(&dir.join("melspectrogram.onnx"))
+            .add_word(&dir.join("melspectrogram.onnx"))
             .expect_err("must be refused");
         println!("{err}");
         assert!(matches!(err, Error::ModelInvalid { .. }), "{err}");
@@ -486,7 +498,7 @@ mod tests {
         let Some(dir) = model_dir() else { return };
         let mut model = shared(&dir).unwrap();
         let err = model
-            .load_word(&dir.join("no_such_word.onnx"))
+            .add_word(&dir.join("no_such_word.onnx"))
             .expect_err("must be refused");
         assert!(matches!(err, Error::ModelNotFound { .. }), "{err}");
     }
@@ -499,15 +511,15 @@ mod tests {
             return;
         };
         let mut model = shared(&dir).unwrap();
-        model.load_word(&dir.join("hey_jarvis_v0.1.onnx")).unwrap();
+        model.add_word(&dir.join("hey_jarvis_v0.1.onnx")).unwrap();
 
         let quiet = vec![0i16; FRAME_SAMPLES];
         let mut first_answer = None;
         let mut scores = Vec::new();
         for n in 0..40 {
-            if let Some(score) = model.push(&quiet).unwrap() {
+            if let Some(answer) = model.push(&quiet).unwrap() {
                 first_answer.get_or_insert(n);
-                scores.push(score);
+                scores.extend(answer);
             }
         }
 
@@ -523,6 +535,30 @@ mod tests {
             "silence read as the wake word: {:?}",
             scores.iter().take(5).collect::<Vec<_>>()
         );
+    }
+
+    /// The same word loaded twice must score the same, since both read
+    /// one shared window of features.
+    #[test]
+    #[ignore]
+    fn every_word_is_scored_on_the_same_features() {
+        let Some(dir) = model_dir() else { return };
+        let mut model = shared(&dir).unwrap();
+        model.add_word(&dir.join("hey_jarvis_v0.1.onnx")).unwrap();
+        model.add_word(&dir.join("hey_jarvis_v0.1.onnx")).unwrap();
+
+        let hum: Vec<i16> = (0..FRAME_SAMPLES)
+            .map(|n| ((n % 40) as i16 - 20) * 300)
+            .collect();
+        let mut answers = 0;
+        for _ in 0..40 {
+            if let Some(scores) = model.push(&hum).unwrap() {
+                assert_eq!(scores.len(), 2, "one score per word");
+                assert_eq!(scores[0], scores[1], "the two copies disagree");
+                answers += 1;
+            }
+        }
+        assert!(answers > 0, "the pipeline never answered");
     }
 
     #[test]
@@ -541,7 +577,7 @@ mod tests {
     fn a_frame_of_the_wrong_length_is_refused() {
         let Some(dir) = model_dir() else { return };
         let mut model = shared(&dir).unwrap();
-        model.load_word(&dir.join("hey_jarvis_v0.1.onnx")).unwrap();
+        model.add_word(&dir.join("hey_jarvis_v0.1.onnx")).unwrap();
         let err = model.push(&vec![0i16; 512]).expect_err("must refuse");
         assert!(err.to_string().contains("1280"), "{err}");
     }

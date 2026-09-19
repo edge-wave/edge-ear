@@ -18,28 +18,29 @@ use crate::wake::model::WakeSource;
 /// the audio behind it is still in the pipeline and would fire again.
 pub struct Detector<M: WakeSource> {
     model: M,
-    threshold: f32,
+    /// One per word, in the order the model scores them.
+    thresholds: Vec<f32>,
     settle_frames: u32,
     settling: u32,
 }
 
 impl<M: WakeSource> Detector<M> {
-    pub fn new(model: M, threshold: f32, settle_frames: u32) -> Self {
+    pub fn new(model: M, thresholds: Vec<f32>, settle_frames: u32) -> Self {
         Self {
             model,
-            threshold,
+            thresholds,
             settle_frames,
             settling: 0,
         }
     }
 
-    pub fn set_threshold(&mut self, threshold: f32) {
-        self.threshold = threshold;
+    pub fn set_thresholds(&mut self, thresholds: Vec<f32>) {
+        self.thresholds = thresholds;
     }
 
-    /// Feed one frame. The first value is the score, once the pipeline
-    /// has heard enough to give one; the second says it counted.
-    pub fn push(&mut self, frame: &[i16]) -> Result<(Option<f32>, bool)> {
+    /// Feed one frame. The first value holds a score per word, once the
+    /// pipeline has heard enough; the second is the word that counted.
+    pub fn push(&mut self, frame: &[i16]) -> Result<(Option<Vec<f32>>, Option<usize>)> {
         // Counted per frame of audio, not per score. A cleared
         // pipeline scores nothing until it refills, so counting scores
         // would wait that out first and stay deaf twice as long.
@@ -48,19 +49,27 @@ impl<M: WakeSource> Detector<M> {
             self.settling -= 1;
         }
 
-        let Some(score) = self.model.push(frame)? else {
-            return Ok((None, false));
+        let Some(scores) = self.model.push(frame)? else {
+            return Ok((None, None));
         };
-        if looking_away || score < self.threshold {
-            return Ok((Some(score), false));
-        }
+        // Two words over their thresholds at once are one utterance, so
+        // only the surer of them is reported.
+        let heard = scores
+            .iter()
+            .enumerate()
+            .filter(|(i, s)| **s >= self.thresholds.get(*i).copied().unwrap_or(f32::INFINITY))
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(i, _)| i);
+        let Some(word) = heard.filter(|_| !looking_away) else {
+            return Ok((Some(scores), None));
+        };
 
         // Heard it. Clearing the pipeline drops the utterance that
         // caused this, so it cannot be heard a second time on its way
         // out. The count above covers the refill.
         self.model.reset();
         self.settling = self.settle_frames;
-        Ok((Some(score), true))
+        Ok((Some(scores), Some(word)))
     }
 
     /// Start again from nothing.
@@ -80,7 +89,7 @@ impl<M: WakeSource> Detector<M> {
 /// What the handle has asked the wake thread to do.
 #[derive(Default)]
 struct Control {
-    threshold: Option<f32>,
+    thresholds: Option<Vec<f32>>,
     reset: bool,
 }
 
@@ -97,31 +106,43 @@ const NO_SCORE: u32 = u32::MAX;
 pub struct WakeThread {
     control: Arc<Mutex<Control>>,
     stop: Arc<AtomicBool>,
-    /// The most recent score, whether or not it counted as a detection.
-    /// An application tuning how sure the detector must be needs to see
-    /// the ones that fell short.
-    last_score: Arc<AtomicU32>,
+    /// The most recent score of each word, whether or not it counted.
+    /// An application tuning thresholds needs to see the near misses.
+    last_scores: Arc<[AtomicU32]>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl WakeThread {
+    /// Start listening. `words` names each word in the order the
+    /// detector scores them, and is what a detection reports.
     pub fn start<M: WakeSource + 'static>(
         detector: Detector<M>,
+        words: Vec<String>,
         ring: Arc<Ring<AudioChunk>>,
         dispatcher: Arc<Dispatcher>,
         on_wake: OnWake,
     ) -> Result<Self> {
         let control = Arc::new(Mutex::new(Control::default()));
         let stop = Arc::new(AtomicBool::new(false));
-        let last_score = Arc::new(AtomicU32::new(NO_SCORE));
+        let last_scores: Arc<[AtomicU32]> =
+            words.iter().map(|_| AtomicU32::new(NO_SCORE)).collect();
 
         let worker = {
             let control = Arc::clone(&control);
             let stop = Arc::clone(&stop);
-            let scores = Arc::clone(&last_score);
+            let scores = Arc::clone(&last_scores);
+            let listening = Listening {
+                ring,
+                control,
+                stop,
+                scores,
+                words,
+                dispatcher,
+                on_wake,
+            };
             thread::Builder::new()
                 .name("edge-ear-wake".to_string())
-                .spawn(move || run(detector, ring, control, stop, scores, dispatcher, on_wake))
+                .spawn(move || run(detector, listening))
                 .map_err(|e| Error::Backend {
                     device: Device::Input,
                     reason: format!("wake thread would not start: {e}"),
@@ -131,13 +152,14 @@ impl WakeThread {
         Ok(Self {
             control,
             stop,
-            last_score,
+            last_scores,
             worker: Mutex::new(Some(worker)),
         })
     }
 
-    pub fn set_threshold(&self, value: f32) {
-        self.lock().threshold = Some(value);
+    /// One threshold per word, in the order given at start.
+    pub fn set_thresholds(&self, values: Vec<f32>) {
+        self.lock().thresholds = Some(values);
     }
 
     /// Forget what has been heard, so a fresh utterance is needed.
@@ -145,10 +167,10 @@ impl WakeThread {
         self.lock().reset = true;
     }
 
-    /// The most recent score, or nothing until the pipeline has heard
-    /// enough to give one.
-    pub fn last_score(&self) -> Option<f32> {
-        match self.last_score.load(Ordering::Relaxed) {
+    /// The most recent score of one word, or nothing until the
+    /// pipeline has heard enough to give one.
+    pub fn last_score(&self, word: usize) -> Option<f32> {
+        match self.last_scores.get(word)?.load(Ordering::Relaxed) {
             NO_SCORE => None,
             bits => Some(f32::from_bits(bits)),
         }
@@ -173,15 +195,27 @@ impl Drop for WakeThread {
     }
 }
 
-fn run<M: WakeSource>(
-    mut detector: Detector<M>,
+/// Everything the wake thread works with besides the detector.
+struct Listening {
     ring: Arc<Ring<AudioChunk>>,
     control: Arc<Mutex<Control>>,
     stop: Arc<AtomicBool>,
-    scores: Arc<AtomicU32>,
+    scores: Arc<[AtomicU32]>,
+    words: Vec<String>,
     dispatcher: Arc<Dispatcher>,
     on_wake: OnWake,
-) {
+}
+
+fn run<M: WakeSource>(mut detector: Detector<M>, l: Listening) {
+    let Listening {
+        ring,
+        control,
+        stop,
+        scores,
+        words,
+        dispatcher,
+        on_wake,
+    } = l;
     // An inference failure is logged when it starts, not on every frame.
     let mut failing = false;
     let mut losses = LossReport::new("wake word detection");
@@ -199,8 +233,8 @@ fn run<M: WakeSource>(
 
         {
             let mut c = control.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(threshold) = c.threshold.take() {
-                detector.set_threshold(threshold);
+            if let Some(thresholds) = c.thresholds.take() {
+                detector.set_thresholds(thresholds);
             }
             if std::mem::take(&mut c.reset) {
                 detector.reset();
@@ -213,22 +247,23 @@ fn run<M: WakeSource>(
         };
 
         match detector.push(samples) {
-            Ok((score, detected)) => {
+            Ok((answer, heard)) => {
                 if failing {
                     log::info!("wake word detection works again");
                     failing = false;
                 }
-                if let Some(score) = score {
-                    scores.store(score.to_bits(), Ordering::Relaxed);
+                for (slot, score) in scores.iter().zip(answer.iter().flatten()) {
+                    slot.store(score.to_bits(), Ordering::Relaxed);
                 }
-                if detected {
+                if let Some(index) = heard {
                     // Act first, tell the application second. The alert
                     // and the recording must not wait on a handler.
                     on_wake();
-                    log::info!("heard the wake word, score {:.3}", score.unwrap_or(0.0));
-                    dispatcher.emit(Event::WakeDetected {
-                        score: score.unwrap_or(0.0),
-                    });
+                    let score = answer.as_ref().and_then(|a| a.get(index)).copied();
+                    let score = score.unwrap_or(0.0);
+                    let word = words.get(index).cloned().unwrap_or_default();
+                    log::info!("heard the wake word {word:?}, score {score:.3}");
+                    dispatcher.emit(Event::WakeDetected { word, score });
                 }
             }
             Err(e) => {
@@ -261,11 +296,31 @@ mod tests {
     const FRAME: usize = 1280;
 
     fn detector(script: ScriptedWake, threshold: f32, settle: u32) -> Detector<ScriptedWake> {
-        Detector::new(script, threshold, settle)
+        Detector::new(script, vec![threshold], settle)
     }
 
+    /// One word's view of a push: its score and whether it counted.
     fn push(d: &mut Detector<ScriptedWake>) -> (Option<f32>, bool) {
-        d.push(&[100; FRAME]).unwrap()
+        let (scores, heard) = d.push(&[100; FRAME]).unwrap();
+        (scores.map(|s| s[0]), heard.is_some())
+    }
+
+    fn start(
+        detector: Detector<ScriptedWake>,
+        ring: &Arc<Ring<AudioChunk>>,
+        d: &Arc<Dispatcher>,
+    ) -> WakeThread {
+        start_acting(detector, ring, d, Box::new(|| {}))
+    }
+
+    fn start_acting(
+        detector: Detector<ScriptedWake>,
+        ring: &Arc<Ring<AudioChunk>>,
+        d: &Arc<Dispatcher>,
+        on_wake: OnWake,
+    ) -> WakeThread {
+        let words = vec!["only".to_string()];
+        WakeThread::start(detector, words, Arc::clone(ring), Arc::clone(d), on_wake).unwrap()
     }
 
     fn chunk() -> AudioChunk {
@@ -382,8 +437,93 @@ mod tests {
     fn a_threshold_changed_later_is_the_one_used() {
         let mut d = detector(ScriptedWake::new(vec![Some(0.6)]), 0.9, 20);
         assert!(!push(&mut d).1, "0.6 is under 0.9");
-        d.set_threshold(0.5);
+        d.set_thresholds(vec![0.5]);
         assert!(push(&mut d).1, "0.6 is over 0.5");
+    }
+
+    fn two_words(script: Vec<Option<Vec<f32>>>, thresholds: [f32; 2]) -> Detector<ScriptedWake> {
+        Detector::new(ScriptedWake::words(script), thresholds.to_vec(), 3)
+    }
+
+    #[test]
+    fn each_word_is_held_to_its_own_threshold() {
+        let mut d = two_words(vec![Some(vec![0.6, 0.6])], [0.9, 0.5]);
+        let (scores, heard) = d.push(&[100; FRAME]).unwrap();
+        assert_eq!(scores, Some(vec![0.6, 0.6]));
+        assert_eq!(heard, Some(1), "only the second word was over its own");
+    }
+
+    #[test]
+    fn two_words_heard_at_once_report_the_surer_one() {
+        let mut d = two_words(vec![Some(vec![0.7, 0.95])], [0.5, 0.5]);
+        assert_eq!(d.push(&[100; FRAME]).unwrap().1, Some(1));
+    }
+
+    /// One utterance clears the pipeline for every word, so another word
+    /// cannot be heard in the same audio on its way out.
+    #[test]
+    fn hearing_one_word_makes_every_word_look_away() {
+        let script = vec![Some(vec![0.9, 0.1]), Some(vec![0.1, 0.9])];
+        let mut d = two_words(script, [0.5, 0.5]);
+        assert_eq!(d.push(&[100; FRAME]).unwrap().1, Some(0));
+        for _ in 0..3 {
+            assert_eq!(
+                d.push(&[100; FRAME]).unwrap().1,
+                None,
+                "heard while looking away"
+            );
+        }
+    }
+
+    #[test]
+    fn a_word_without_a_threshold_never_counts() {
+        let mut d = Detector::new(
+            ScriptedWake::words(vec![Some(vec![0.1, 1.0])]),
+            vec![0.5],
+            3,
+        );
+        assert_eq!(d.push(&[100; FRAME]).unwrap().1, None);
+    }
+
+    #[test]
+    fn the_word_heard_is_named_in_the_notification() {
+        let ring = Arc::new(Ring::new(64));
+        let dispatcher = Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY));
+        let heard = Arc::new(Mutex::new(Vec::new()));
+
+        let sink = Arc::clone(&heard);
+        dispatcher.set_handler(Box::new(move |event| {
+            if let Event::WakeDetected { word, .. } = event {
+                sink.lock().unwrap_or_else(|e| e.into_inner()).push(word);
+            }
+        }));
+
+        let script = vec![
+            Some(vec![0.1, 0.1]),
+            Some(vec![0.1, 0.9]),
+            Some(vec![0.1, 0.1]),
+        ];
+        let words = vec!["alexa".to_string(), "jarvis".to_string()];
+        let thread = WakeThread::start(
+            two_words(script, [0.5, 0.5]),
+            words,
+            Arc::clone(&ring),
+            Arc::clone(&dispatcher),
+            Box::new(|| {}),
+        )
+        .unwrap();
+
+        for _ in 0..4 {
+            ring.push(chunk());
+        }
+        assert!(
+            wait_until(|| !heard.lock().unwrap().is_empty()),
+            "never told"
+        );
+        assert_eq!(*heard.lock().unwrap(), vec!["jarvis".to_string()]);
+        assert!(wait_until(|| thread.last_score(0).is_some()));
+        assert_eq!(thread.last_score(2), None, "there is no third word");
+        thread.shutdown();
     }
 
     /// A failure that repeats is told once. Every frame would fill the
@@ -401,13 +541,11 @@ mod tests {
             }
         }));
 
-        let thread = WakeThread::start(
+        let thread = start(
             detector(ScriptedWake::always_failing(), 0.5, 20),
-            Arc::clone(&ring),
-            Arc::clone(&dispatcher),
-            Box::new(|| {}) as OnWake,
-        )
-        .unwrap();
+            &ring,
+            &dispatcher,
+        );
 
         for _ in 0..8 {
             ring.push(chunk());
@@ -448,13 +586,12 @@ mod tests {
             let flag = Arc::clone(&acted);
             Box::new(move || flag.store(true, Ordering::SeqCst)) as OnWake
         };
-        let thread = WakeThread::start(
+        let thread = start_acting(
             detector(ScriptedWake::heard_after(1, 0.9), 0.5, 20),
-            Arc::clone(&ring),
-            Arc::clone(&dispatcher),
+            &ring,
+            &dispatcher,
             on_wake,
-        )
-        .unwrap();
+        );
 
         for _ in 0..4 {
             ring.push(chunk());
@@ -489,14 +626,12 @@ mod tests {
             }
         }));
 
-        let thread = WakeThread::start(
-            // Quiet until the frame that carries the word.
+        // Quiet until the frame that carries the word.
+        let thread = start(
             detector(ScriptedWake::heard_after(3, 0.9), 0.5, 20),
-            Arc::clone(&ring),
-            Arc::clone(&dispatcher),
-            Box::new(|| {}),
-        )
-        .unwrap();
+            &ring,
+            &dispatcher,
+        );
 
         for _ in 0..3 {
             ring.push(chunk());
@@ -527,20 +662,18 @@ mod tests {
     fn the_most_recent_score_is_there_to_read() {
         let ring = Arc::new(Ring::new(64));
         let dispatcher = Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY));
-        let thread = WakeThread::start(
+        let thread = start(
             detector(ScriptedWake::new(vec![Some(0.31)]), 0.9, 20),
-            Arc::clone(&ring),
-            dispatcher,
-            Box::new(|| {}),
-        )
-        .unwrap();
+            &ring,
+            &dispatcher,
+        );
 
-        assert_eq!(thread.last_score(), None, "nothing scored yet");
+        assert_eq!(thread.last_score(0), None, "nothing scored yet");
         ring.push(chunk());
 
-        assert!(wait_until(|| thread.last_score().is_some()));
+        assert!(wait_until(|| thread.last_score(0).is_some()));
         // Under the threshold, so it never counted, but it is readable.
-        assert_eq!(thread.last_score(), Some(0.31));
+        assert_eq!(thread.last_score(0), Some(0.31));
         thread.shutdown();
     }
 }

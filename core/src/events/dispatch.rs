@@ -214,7 +214,10 @@ mod tests {
     #[test]
     fn events_arrive_in_order() {
         let (dispatcher, seen) = collector();
-        dispatcher.emit(Event::WakeDetected { score: 0.9 });
+        dispatcher.emit(Event::WakeDetected {
+            word: "w".into(),
+            score: 0.9,
+        });
         dispatcher.emit(Event::SoundFinished {
             id: "alert".to_string(),
         });
@@ -229,7 +232,10 @@ mod tests {
     #[test]
     fn events_raised_before_a_handler_exists_are_kept() {
         let dispatcher = Dispatcher::new(DEFAULT_QUEUE_CAPACITY);
-        dispatcher.emit(Event::WakeDetected { score: 0.9 });
+        dispatcher.emit(Event::WakeDetected {
+            word: "w".into(),
+            score: 0.9,
+        });
         dispatcher.emit(Event::SoundFinished {
             id: "alert".to_string(),
         });
@@ -261,7 +267,10 @@ mod tests {
         // the handler, this would take many seconds.
         let started = Instant::now();
         for _ in 0..1_000 {
-            dispatcher.emit(Event::WakeDetected { score: 0.5 });
+            dispatcher.emit(Event::WakeDetected {
+                word: "w".into(),
+                score: 0.5,
+            });
         }
         assert!(
             started.elapsed() < Duration::from_millis(100),
@@ -275,7 +284,10 @@ mod tests {
     fn a_full_queue_drops_oldest_and_reports_the_count() {
         let dispatcher = Dispatcher::new(4);
         for _ in 0..100 {
-            dispatcher.emit(Event::WakeDetected { score: 0.5 });
+            dispatcher.emit(Event::WakeDetected {
+                word: "w".into(),
+                score: 0.5,
+            });
         }
         assert!(dispatcher.dropped() > 0);
         assert!(dispatcher.queued() <= 4);
@@ -302,9 +314,15 @@ mod tests {
             }
         }));
 
-        dispatcher.emit(Event::WakeDetected { score: 0.1 });
+        dispatcher.emit(Event::WakeDetected {
+            word: "w".into(),
+            score: 0.1,
+        });
         assert!(wait_until(|| count.load(Ordering::SeqCst) == 1));
-        dispatcher.emit(Event::WakeDetected { score: 0.2 });
+        dispatcher.emit(Event::WakeDetected {
+            word: "w".into(),
+            score: 0.2,
+        });
         assert!(wait_until(|| count.load(Ordering::SeqCst) == 2));
     }
 
@@ -317,7 +335,10 @@ mod tests {
             // the thread it is running on.
             inner.shutdown();
         }));
-        dispatcher.emit(Event::WakeDetected { score: 0.5 });
+        dispatcher.emit(Event::WakeDetected {
+            word: "w".into(),
+            score: 0.5,
+        });
         assert!(wait_until(|| lock(&dispatcher.worker).is_none()));
     }
 }

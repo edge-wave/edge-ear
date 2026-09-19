@@ -24,7 +24,7 @@ static void on_event(const edge_ear_event *event, void *user)
     (void)user;
     switch (event->kind) {
     case EDGE_EAR_EVENT_WAKE_DETECTED:
-        printf("heard the wake word (%.2f)\n", event->score);
+        printf("heard %s (%.2f)\n", event->word, event->score);
         break;
     case EDGE_EAR_EVENT_SPEECH_ENDED:
         printf("recording of %zu samples ended, reason %d\n",

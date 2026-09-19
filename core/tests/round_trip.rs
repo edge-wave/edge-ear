@@ -96,7 +96,7 @@ fn naming_a_sound_nobody_registered_says_so() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
 
     let err = ear.enable_wake(Some("ghost")).expect_err("must refuse");
@@ -115,7 +115,7 @@ fn an_alert_is_remembered_once_named() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
 
     ear.enable_wake(Some("beep")).unwrap();
@@ -140,7 +140,7 @@ fn capture_keeps_running_the_whole_way_through() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
 
     let _seen = watch(&ear);
@@ -180,7 +180,7 @@ fn a_recording_opened_behind_an_alert_waits_for_it() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
 
     let seen = watch(&ear);
@@ -214,7 +214,7 @@ fn the_alert_finishing_is_what_starts_the_counting() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
 
     let seen = watch(&ear);
@@ -285,7 +285,7 @@ fn wake_pre_roll(waits_for_alert: bool) -> Option<usize> {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
     ear.set_no_speech_timeout(Duration::from_millis(600))
         .unwrap();
@@ -379,7 +379,7 @@ fn cutting_the_alert_short_still_lets_the_recording_end() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
 
     let seen = watch(&ear);
@@ -420,7 +420,7 @@ fn timeout_a_recording_followed(by_wake: bool) -> Option<Duration> {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
     // What start would have carried off, had it carried anything.
     ear.set_no_speech_timeout(Duration::from_secs(5)).unwrap();
@@ -487,4 +487,52 @@ fn a_recording_opened_by_hand_follows_it_too() {
         counted < Duration::from_secs(1),
         "counted {counted:?}, so it followed the timeout in place at start"
     );
+}
+
+/// Two words listened for together: the one held back by its own
+/// threshold stays quiet, and the other is named when heard.
+#[test]
+#[ignore]
+fn among_several_words_the_one_heard_is_named() {
+    let (Some(dir), Some(word)) = (model_dir(), spoken_wake_word()) else {
+        println!("set EDGE_EAR_WAKE_DIR and EDGE_EAR_WAKE_WAV to run this");
+        return;
+    };
+    let ear = heard(word);
+    ear.load_wake_features(
+        &dir.join("melspectrogram.onnx"),
+        &dir.join("embedding_model.onnx"),
+    )
+    .unwrap();
+    for name in ["first", "second"] {
+        ear.add_wake_model(name, &dir.join("hey_jarvis_v0.1.onnx"))
+            .unwrap();
+    }
+    assert_eq!(ear.wake_models(), ["first", "second"]);
+    ear.set_wake_word_threshold("first", Some(1.0)).unwrap();
+
+    let names = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&names);
+    ear.on_event(move |event| {
+        if let Event::WakeDetected { word, .. } = event {
+            sink.lock().unwrap_or_else(|e| e.into_inner()).push(word);
+        }
+    })
+    .unwrap();
+    ear.enable_wake(None).unwrap();
+    ear.start().unwrap();
+
+    assert!(
+        wait_until(15, || !names
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()),
+        "the wake word was never heard"
+    );
+    assert_eq!(names.lock().unwrap()[0], "second");
+    assert!(
+        ear.wake_score("first").unwrap().is_some(),
+        "first was never scored"
+    );
+    ear.destroy();
 }

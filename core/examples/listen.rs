@@ -29,7 +29,8 @@ Set these to wait for a wake word rather than recording at once:
   EDGE_EAR_WAKE_DIR        directory holding the models. Needs
                            melspectrogram.onnx, embedding_model.onnx,
                            and a wake word. This library ships none.
-  EDGE_EAR_WAKE_WORD       which wake word file to use.
+  EDGE_EAR_WAKE_WORD       which wake word files to use, separated
+                           by commas to listen for several at once.
                            default hey_jarvis_v0.1.onnx
   EDGE_EAR_WAKE_THRESHOLD  how sure it must be, 0.0 to 1.0.
                            lower catches more and mishears more.
@@ -105,8 +106,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ear.on_event(move |event| {
         let at = started.elapsed().as_secs_f64();
         match event {
-            Event::WakeDetected { score } => {
-                println!("\r  [{at:>5.1}s] heard the wake word ({score:.3}) — listening");
+            Event::WakeDetected { word, score } => {
+                println!("\r  [{at:>5.1}s] heard {word} ({score:.3}) — listening");
             }
             Event::SoundFinished { id } => {
                 println!("\r  [{at:>5.1}s] {id} finished, now counting silence");
@@ -178,7 +179,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // The score is shown whether or not it counted, so a wake
             // word that nearly made it can be told from one the model
             // never noticed at all.
-            let score = match ear.wake_score() {
+            // With several words, the one nearest to counting is shown.
+            let best = ear
+                .wake_models()
+                .iter()
+                .filter_map(|w| ear.wake_score(w).ok().flatten())
+                .reduce(f32::max);
+            let score = match best {
                 Some(score) => format!("  wake {}", score_bar(score)),
                 None if waiting_for_wake => "  wake  listening".to_string(),
                 None => String::new(),
@@ -209,14 +216,18 @@ fn set_up_wake(ear: &EdgeEar) -> Result<bool, Box<dyn std::error::Error>> {
         return Ok(false);
     };
     let dir = PathBuf::from(dir);
-    let word =
+    let words =
         std::env::var("EDGE_EAR_WAKE_WORD").unwrap_or_else(|_| "hey_jarvis_v0.1.onnx".to_string());
 
     ear.load_wake_features(
         &dir.join("melspectrogram.onnx"),
         &dir.join("embedding_model.onnx"),
     )?;
-    ear.load_wake_model(&dir.join(&word))?;
+    for file in words.split(',').map(str::trim).filter(|f| !f.is_empty()) {
+        // Named after the file, so hey_jarvis_v0.1.onnx is heard as hey_jarvis_v0.1.
+        let name = file.strip_suffix(".onnx").unwrap_or(file);
+        ear.add_wake_model(name, &dir.join(file))?;
+    }
 
     if let Ok(text) = std::env::var("EDGE_EAR_WAKE_SETTLE") {
         let frames: u32 = text
@@ -232,7 +243,7 @@ fn set_up_wake(ear: &EdgeEar) -> Result<bool, Box<dyn std::error::Error>> {
     }
     ear.enable_wake(Some("beep"))?;
 
-    println!("wake word: {word}");
+    println!("wake words: {}", ear.wake_models().join(", "));
     let settle = ear.config().tunable.wake_settle_frames;
     println!("threshold: {:.2}", ear.config().tunable.wake_threshold);
     println!(

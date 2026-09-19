@@ -14,7 +14,8 @@ def test_every_error_is_its_own_class():
         "NotRunning", "AlreadyRunning", "RunningNotAllowed", "RecordingOpen",
         "Destroyed", "NoWakeModel", "ModelNotFound", "ModelUnreadable",
         "ModelInvalid", "UnsupportedFormat", "InvalidValue", "NoDevice",
-        "PermissionDenied", "DeviceLost", "UnknownSound", "Timeout",
+        "PermissionDenied", "DeviceLost", "UnknownSound", "UnknownWakeWord",
+        "Timeout",
         "Stopped", "BackendError", "ConversionError",
     ]
     seen = set()
@@ -65,6 +66,19 @@ def test_playing_a_sound_nobody_registered_says_so():
     with edge_ear.EdgeEar() as ear:
         with pytest.raises(edge_ear.UnknownSound):
             ear.play_sound("never-registered")
+
+
+def test_a_wake_word_nobody_added_says_so():
+    with edge_ear.EdgeEar() as ear:
+        assert ear.wake_models == []
+        for call in (
+            lambda: ear.remove_wake_model("jarvis"),
+            lambda: ear.wake_score("jarvis"),
+            lambda: ear.set_wake_word_threshold("jarvis", 0.6),
+            lambda: ear.wake_word_threshold("jarvis"),
+        ):
+            with pytest.raises(edge_ear.UnknownWakeWord):
+                call()
 
 
 def test_a_volume_outside_the_range_is_refused():

@@ -10,7 +10,8 @@ to put any.
 
 - Reads one microphone and hands the audio to whoever asks, in whatever
   format each asks for
-- Listens for a wake word and tells you when it hears one
+- Listens for one or more wake words at once and tells you which it
+  heard
 - Hands you a recording once the speaker goes quiet
 - Plays a sound, so an alert or a spoken reply can come out of the
   speaker
@@ -37,18 +38,23 @@ That is the whole thing. Detectors are off until you switch them on:
 
 ```rust
 ear.load_wake_features(&spectrogram, &features)?;
-ear.load_wake_model(&phrase)?;
+ear.add_wake_model("hey_jarvis", &phrase)?;
 ear.enable_wake(None)?;
 ear.enable_speech()?;
 
 ear.on_event(|event| match event {
-    Event::WakeDetected { .. } => println!("heard it"),
+    Event::WakeDetected { word, .. } => println!("heard {word}"),
     Event::SpeechEnded { audio, reason, .. } => {
         println!("{} samples, ended on {reason}", audio.len())
     }
     _ => {}
 })?;
 ```
+
+Add more words with `add_wake_model` to listen for them together. The
+two feature models run once for all of them, so each extra word costs
+only its own small model. Each word can have its own threshold through
+`set_wake_word_threshold`.
 
 ## Models
 

@@ -80,6 +80,8 @@ pub struct edge_ear_event {
     /// Events dropped: how many the application was never told about,
     /// because a handler could not keep up.
     pub dropped: u64,
+    /// Wake detected: the name the word heard was added under.
+    pub word: *const c_char,
 }
 
 /// Called for every notification. The event stops being valid when it
@@ -110,13 +112,20 @@ impl Registered {
         // dropped after it, which is exactly the promised lifetime.
         let mut sound_id = None;
         let mut message = None;
+        let mut word_name = None;
 
         let laid_out = match &event {
-            Event::WakeDetected { score } => edge_ear_event {
-                kind: edge_ear_event_kind::EDGE_EAR_EVENT_WAKE_DETECTED,
-                score: *score,
-                ..edge_ear_event::empty()
-            },
+            Event::WakeDetected { word, score } => {
+                let text = CString::new(word.as_str()).unwrap_or_default();
+                let ptr = text.as_ptr();
+                word_name = Some(text);
+                edge_ear_event {
+                    kind: edge_ear_event_kind::EDGE_EAR_EVENT_WAKE_DETECTED,
+                    score: *score,
+                    word: ptr,
+                    ..edge_ear_event::empty()
+                }
+            }
             Event::SpeechEnded {
                 audio,
                 sample_rate,
@@ -163,6 +172,7 @@ impl Registered {
         unsafe { callback(&laid_out, self.user) };
         drop(sound_id);
         drop(message);
+        drop(word_name);
     }
 }
 
@@ -179,6 +189,7 @@ impl edge_ear_event {
             sound_id: std::ptr::null(),
             message: std::ptr::null(),
             dropped: 0,
+            word: std::ptr::null(),
         }
     }
 }

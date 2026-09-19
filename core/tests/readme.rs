@@ -29,12 +29,12 @@ fn the_readme_second_example(
     phrase: &Path,
 ) -> Result<()> {
     ear.load_wake_features(spectrogram, features)?;
-    ear.load_wake_model(phrase)?;
+    ear.add_wake_model("hey_jarvis", phrase)?;
     ear.enable_wake(None)?;
     ear.enable_speech()?;
 
     ear.on_event(|event| match event {
-        Event::WakeDetected { .. } => println!("heard it"),
+        Event::WakeDetected { word, .. } => println!("heard {word}"),
         Event::SpeechEnded { audio, reason, .. } => {
             println!("{} samples, ended on {reason}", audio.len())
         }

@@ -49,12 +49,19 @@ int main(void)
           "read before start");
     CHECK(edge_ear_start_recording(ear) == EDGE_EAR_NOT_RUNNING, "record before start");
     CHECK(edge_ear_enable_wake(ear, NULL) == EDGE_EAR_NO_WAKE_MODEL, "wake with no model");
-    CHECK(edge_ear_load_wake_model(ear, "nowhere.onnx") == EDGE_EAR_NO_WAKE_MODEL,
+    CHECK(edge_ear_add_wake_model(ear, "w", "nowhere.onnx") == EDGE_EAR_NO_WAKE_MODEL,
           "word before features");
     CHECK(edge_ear_load_wake_features(ear, "nowhere.onnx", "gone.onnx")
               == EDGE_EAR_MODEL_NOT_FOUND, "missing feature models");
 
-    CHECK(edge_ear_load_wake_model(ear, NULL) == EDGE_EAR_NULL_ARGUMENT, "null path");
+    CHECK(edge_ear_add_wake_model(ear, "w", NULL) == EDGE_EAR_NULL_ARGUMENT, "null path");
+    CHECK(edge_ear_add_wake_model(ear, NULL, "w.onnx") == EDGE_EAR_NULL_ARGUMENT, "null word");
+    CHECK(edge_ear_remove_wake_model(ear, "w") == EDGE_EAR_UNKNOWN_WAKE_WORD,
+          "remove unknown word");
+    const char *const *words = NULL;
+    size_t word_count = 9;
+    CHECK(edge_ear_get_wake_models(ear, &words, &word_count) == EDGE_EAR_OK, "list words");
+    CHECK(word_count == 0, "no words yet");
     CHECK(edge_ear_play_sound(ear, NULL, 0) == EDGE_EAR_NULL_ARGUMENT, "null sound name");
     CHECK(edge_ear_read(ear, NULL, 10, 0, &got) == EDGE_EAR_NULL_ARGUMENT, "null buffer");
     CHECK(edge_ear_read(ear, buf, 10, 0, NULL) == EDGE_EAR_NULL_ARGUMENT, "null count");
@@ -62,6 +69,15 @@ int main(void)
     CHECK(edge_ear_set_wake_threshold(ear, 0.6f) == EDGE_EAR_OK, "wake threshold");
     CHECK(edge_ear_set_wake_threshold(ear, 5.0f) == EDGE_EAR_INVALID_VALUE,
           "threshold out of range");
+    CHECK(edge_ear_set_wake_word_threshold(ear, "w", 0.6f) == EDGE_EAR_UNKNOWN_WAKE_WORD,
+          "threshold of unknown word");
+    CHECK(edge_ear_set_wake_word_threshold(ear, "w", 5.0f) == EDGE_EAR_INVALID_VALUE,
+          "word threshold out of range");
+    CHECK(edge_ear_unset_wake_word_threshold(ear, "w") == EDGE_EAR_UNKNOWN_WAKE_WORD,
+          "unset unknown word");
+    float word_threshold = 0.0f;
+    CHECK(edge_ear_get_wake_word_threshold(ear, "w", &word_threshold)
+              == EDGE_EAR_UNKNOWN_WAKE_WORD, "get unknown word threshold");
     CHECK(edge_ear_set_silence_duration(ear, 0.5) == EDGE_EAR_OK, "silence duration");
     CHECK(edge_ear_set_silence_duration(ear, -1.0) == EDGE_EAR_INVALID_VALUE,
           "negative duration");
@@ -128,7 +144,8 @@ int main(void)
     CHECK(edge_ear_unregister_sound(ear, "beep") == EDGE_EAR_OK, "unregister");
 
     float score = 0.0f;
-    CHECK(edge_ear_get_wake_score(ear, &score) == EDGE_EAR_NOT_RUNNING, "no score yet");
+    CHECK(edge_ear_get_wake_score(ear, "w", &score) == EDGE_EAR_UNKNOWN_WAKE_WORD,
+          "score of unknown word");
     const char *alert = (const char *)1;
     CHECK(edge_ear_get_wake_alert(ear, &alert) == EDGE_EAR_OK, "alert getter");
     CHECK(alert == NULL, "no alert named");

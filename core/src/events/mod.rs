@@ -49,7 +49,10 @@ impl std::fmt::Display for EndReason {
 /// analyses audio.
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// One of the wake words was heard. `word` is the name it was
+    /// added under, and `score` how sure the detector was of it.
     WakeDetected {
+        word: String,
         score: f32,
     },
     SpeechEnded {

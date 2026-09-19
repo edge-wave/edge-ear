@@ -29,7 +29,7 @@ fn listening_without_a_model_says_one_is_needed() {
 fn a_wake_word_without_the_shared_models_says_what_is_missing() {
     let ear = ear();
     let err = ear
-        .load_wake_model(&PathBuf::from("anything.onnx"))
+        .add_wake_model("anything", &PathBuf::from("anything.onnx"))
         .expect_err("must refuse");
     assert!(matches!(err, Error::NoWakeModel), "{err}");
 }
@@ -53,7 +53,7 @@ fn models_cannot_be_swapped_while_capture_runs() {
 
     for result in [
         ear.load_wake_features(&PathBuf::from("a.onnx"), &PathBuf::from("b.onnx")),
-        ear.load_wake_model(&PathBuf::from("c.onnx")),
+        ear.add_wake_model("c", &PathBuf::from("c.onnx")),
     ] {
         let err = result.expect_err("must refuse");
         assert!(matches!(err, Error::RunningNotAllowed { .. }), "{err}");
@@ -100,7 +100,7 @@ fn a_wake_word_can_be_switched_on_and_off_around_a_run() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
 
     // Accepted before capture starts, and in force once it does.
@@ -131,13 +131,13 @@ fn silence_is_never_reported_as_the_wake_word() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
 
     let heard = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&heard);
     ear.on_event(move |event| {
-        if let Event::WakeDetected { score } = event {
+        if let Event::WakeDetected { score, .. } = event {
             sink.lock().unwrap_or_else(|e| e.into_inner()).push(score);
         }
     })
@@ -167,16 +167,17 @@ fn a_model_that_is_not_a_wake_word_is_refused() {
     .unwrap();
 
     let err = ear
-        .load_wake_model(&dir.join("embedding_model.onnx"))
+        .add_wake_model("embedding", &dir.join("embedding_model.onnx"))
         .expect_err("must refuse");
     assert!(matches!(err, Error::ModelInvalid { .. }), "{err}");
     println!("{err}");
 }
 
 #[test]
-fn there_is_no_score_before_anything_has_been_heard() {
+fn a_score_is_asked_for_by_the_name_of_a_loaded_word() {
     let ear = ear();
-    assert_eq!(ear.wake_score(), None, "nothing has been scored yet");
+    let err = ear.wake_score("jarvis").expect_err("nothing is loaded");
+    assert!(matches!(err, Error::UnknownWakeWord(_)), "{err}");
 }
 
 #[test]
@@ -192,7 +193,7 @@ fn scores_are_reported_even_when_they_fall_short() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.load_wake_model(&dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
     ear.enable_wake(None).unwrap();
     ear.start().unwrap();
@@ -202,7 +203,7 @@ fn scores_are_reported_even_when_they_fall_short() {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let mut score = None;
     while score.is_none() && std::time::Instant::now() < deadline {
-        score = ear.wake_score();
+        score = ear.wake_score("hey_jarvis").unwrap();
         std::thread::sleep(Duration::from_millis(20));
     }
 

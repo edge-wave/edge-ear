@@ -73,6 +73,9 @@ pub enum Error {
     #[error("no sound is registered with id {0}")]
     UnknownSound(String),
 
+    #[error("no wake word is loaded under the name {0}")]
+    UnknownWakeWord(String),
+
     #[error("timed out waiting for audio")]
     Timeout,
 

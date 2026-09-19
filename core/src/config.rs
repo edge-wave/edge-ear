@@ -222,7 +222,7 @@ pub struct Config {
     pub tunable: TunableConfig,
 }
 
-fn check_unit(setting: &'static str, value: f32) -> Result<()> {
+pub(crate) fn check_unit(setting: &'static str, value: f32) -> Result<()> {
     if !(0.0..=1.0).contains(&value) || value.is_nan() {
         return Err(Error::InvalidValue {
             setting,

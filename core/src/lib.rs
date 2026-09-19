@@ -73,7 +73,8 @@ struct Inner {
     /// Where the three models live. The application supplies all of
     /// them; this library ships no wake word and no way to make one.
     wake_models: Option<(std::path::PathBuf, std::path::PathBuf)>,
-    wake_word: Option<std::path::PathBuf>,
+    /// The words to listen for, in the order they were added.
+    wake_words: Vec<WakeWord>,
     /// Played when the wake word is heard, if the application named one.
     alert: Option<String>,
     /// The settings as they stand, shared rather than copied, so a
@@ -86,7 +87,32 @@ struct Inner {
     opened_input: Option<AudioFormat>,
 }
 
+/// One wake word the application added, and how sure it must be.
+struct WakeWord {
+    name: String,
+    path: std::path::PathBuf,
+    /// Its own threshold, when it was given one. Otherwise the shared
+    /// one applies.
+    threshold: Option<f32>,
+}
+
 impl Inner {
+    /// The threshold each word is held to, in the order they were added.
+    fn wake_thresholds(&self) -> Vec<f32> {
+        let shared = self.config.tunable.wake_threshold;
+        self.wake_words
+            .iter()
+            .map(|w| w.threshold.unwrap_or(shared))
+            .collect()
+    }
+
+    fn wake_word_index(&self, name: &str) -> Result<usize> {
+        self.wake_words
+            .iter()
+            .position(|w| w.name == name)
+            .ok_or_else(|| Error::UnknownWakeWord(name.to_string()))
+    }
+
     fn consumer(&self, kind: ConsumerKind) -> Option<&Consumer> {
         self.consumers.iter().find(|c| c.kind == kind)
     }
@@ -154,7 +180,7 @@ impl EdgeEar {
                 speech_wanted: false,
                 wake: None,
                 wake_models: None,
-                wake_word: None,
+                wake_words: Vec::new(),
                 alert: None,
                 tunable: Arc::new(Mutex::new(TunableConfig::default())),
                 waiting_now: Arc::new(AtomicBool::new(false)),
@@ -229,18 +255,21 @@ impl EdgeEar {
             });
         }
 
-        let wake = match (&inner.wake_models, &inner.wake_word) {
-            (Some((spectrogram, features)), Some(word)) => {
+        let wake = match &inner.wake_models {
+            Some((spectrogram, features)) if !inner.wake_words.is_empty() => {
                 let mut model = note_failure(
                     "the wake word feature models would not load",
                     WakeModel::new(spectrogram, features),
                 )?;
-                note_failure("the wake word would not load", model.load_word(word))?;
+                for word in &inner.wake_words {
+                    note_failure("the wake word would not load", model.add_word(&word.path))?;
+                }
                 let detector = WakeDetector::new(
                     model,
-                    inner.config.tunable.wake_threshold,
+                    inner.wake_thresholds(),
                     inner.config.tunable.wake_settle_frames,
                 );
+                let words = inner.wake_words.iter().map(|w| w.name.clone()).collect();
                 let ring = consumers
                     .iter()
                     .find(|c| c.kind == ConsumerKind::Wake)
@@ -299,7 +328,7 @@ impl EdgeEar {
 
                 Some(Arc::new(note_failure(
                     "the wake word thread would not start",
-                    WakeThread::start(detector, ring, Arc::clone(&self.dispatcher), on_wake),
+                    WakeThread::start(detector, words, ring, Arc::clone(&self.dispatcher), on_wake),
                 )?))
             }
             _ => None,
@@ -391,17 +420,50 @@ impl EdgeEar {
         Ok(())
     }
 
-    /// Supply the model for the phrase to listen for. Its shape is
-    /// checked here; names inside it are not, since every model has its
-    /// own and any of them works.
-    pub fn load_wake_model(&self, path: &Path) -> Result<()> {
-        let mut inner = self.stopped_only("the wake word model")?;
+    /// Add a phrase to listen for, under the name its detections carry.
+    /// Several are heard at once, and a name already in use is replaced.
+    pub fn add_wake_model(&self, name: &str, path: &Path) -> Result<()> {
+        let mut inner = self.stopped_only("the wake word models")?;
+        if name.is_empty() {
+            return Err(Error::InvalidValue {
+                setting: "wake word name",
+                expected: "a name that is not empty".to_string(),
+                got: "an empty name".to_string(),
+            });
+        }
         let (spectrogram, features) = inner.wake_models.clone().ok_or(Error::NoWakeModel)?;
         let mut model = WakeModel::new(&spectrogram, &features)?;
-        model.load_word(path)?;
-        log::info!("wake word model loaded from {}", path.display());
-        inner.wake_word = Some(path.to_path_buf());
+        model.add_word(path)?;
+        log::info!("wake word {name:?} loaded from {}", path.display());
+
+        let word = WakeWord {
+            name: name.to_string(),
+            path: path.to_path_buf(),
+            threshold: None,
+        };
+        match inner.wake_word_index(name) {
+            Ok(i) => inner.wake_words[i] = word,
+            Err(_) => inner.wake_words.push(word),
+        }
         Ok(())
+    }
+
+    /// Stop listening for one phrase and forget its model.
+    pub fn remove_wake_model(&self, name: &str) -> Result<()> {
+        let mut inner = self.stopped_only("the wake word models")?;
+        let i = inner.wake_word_index(name)?;
+        inner.wake_words.remove(i);
+        log::info!("wake word {name:?} removed");
+        Ok(())
+    }
+
+    /// The names of the words listened for, in the order they were added.
+    pub fn wake_models(&self) -> Vec<String> {
+        self.lock()
+            .wake_words
+            .iter()
+            .map(|w| w.name.clone())
+            .collect()
     }
 
     /// Start listening for the wake word. Naming a sound plays it on
@@ -410,7 +472,7 @@ impl EdgeEar {
     pub fn enable_wake(&self, alert: Option<&str>) -> Result<()> {
         {
             let mut inner = self.alive_mut()?;
-            if inner.wake_word.is_none() {
+            if inner.wake_words.is_empty() {
                 return Err(Error::NoWakeModel);
             }
             if let Some(alert) = alert {
@@ -434,10 +496,12 @@ impl EdgeEar {
         self.lock().alert.clone()
     }
 
-    /// How sure the detector was, most recently: every score, because
-    /// setting a threshold is guesswork without seeing the near misses.
-    pub fn wake_score(&self) -> Option<f32> {
-        self.lock().wake.as_ref().and_then(|w| w.last_score())
+    /// How sure the detector was of one word, most recently: every
+    /// score, because a threshold is guesswork without the near misses.
+    pub fn wake_score(&self, name: &str) -> Result<Option<f32>> {
+        let inner = self.alive_mut()?;
+        let i = inner.wake_word_index(name)?;
+        Ok(inner.wake.as_ref().and_then(|w| w.last_score(i)))
     }
 
     /// Stop listening for the wake word. The models stay loaded.
@@ -755,15 +819,37 @@ impl EdgeEar {
         self.tune(|c| c.tunable.wake_settle_frames = frames)
     }
 
-    /// How sure the detector must be before it says it heard the
-    /// word, from 0.0 to 1.0. Changeable while running.
+    /// How sure the detector must be of a word not given a threshold of
+    /// its own, from 0.0 to 1.0. Changeable while running.
     pub fn set_wake_threshold(&self, value: f32) -> Result<()> {
         self.tune(|c| c.tunable.wake_threshold = value)?;
         let inner = self.lock();
         if let Some(wake) = inner.wake.as_ref() {
-            wake.set_threshold(value);
+            wake.set_thresholds(inner.wake_thresholds());
         }
         Ok(())
+    }
+
+    /// Give one word a threshold of its own, from 0.0 to 1.0, or `None`
+    /// to hold it to the shared one again. Changeable while running.
+    pub fn set_wake_word_threshold(&self, name: &str, value: Option<f32>) -> Result<()> {
+        if let Some(value) = value {
+            config::check_unit("wake word threshold", value)?;
+        }
+        let mut inner = self.alive_mut()?;
+        let i = inner.wake_word_index(name)?;
+        inner.wake_words[i].threshold = value;
+        if let Some(wake) = inner.wake.as_ref() {
+            wake.set_thresholds(inner.wake_thresholds());
+        }
+        Ok(())
+    }
+
+    /// The threshold one word is held to, its own or the shared one.
+    pub fn wake_word_threshold(&self, name: &str) -> Result<f32> {
+        let inner = self.alive_mut()?;
+        let i = inner.wake_word_index(name)?;
+        Ok(inner.wake_thresholds()[i])
     }
 
     /// How readily audio counts as speech. These next four are weighed
