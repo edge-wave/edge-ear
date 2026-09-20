@@ -81,3 +81,35 @@ fn the_tinypipewire_backend_plays_audio() {
     ear.stop_sound().expect("stop sound");
     assert!(!ear.is_playing());
 }
+
+/// The speaker is let go while idle and taken again. Against a real
+/// daemon, because it is PipeWire that has to release the sink.
+#[test]
+#[ignore = "needs a running PipeWire daemon"]
+fn an_idle_speaker_is_released_and_taken_again() {
+    use edge_ear_core::{Samples, SoundSource};
+
+    let ear = EdgeEar::with_tinypipewire().expect("handle over tinypipewire");
+    // Silence, so running this says nothing out loud.
+    let quiet = SoundSource::Pcm {
+        data: Samples::I16(vec![0; 16_000]),
+        sample_rate: 16_000,
+        channels: 1,
+    };
+    ear.register_sound("quiet", quiet, 1.0).expect("register");
+
+    ear.play_sound("quiet", false).expect("first play");
+    assert!(ear.is_playing());
+    // Past the end of the sound and past the idle timeout, so the
+    // device has been let go by the time this returns.
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(!ear.is_playing(), "the sound has run out by now");
+
+    // Nothing above knows whether the device is open, so what this
+    // proves is only that a sound after the release still plays.
+    ear.play_sound("quiet", false)
+        .expect("play after the release");
+    assert!(ear.is_playing(), "the speaker must be taken again");
+    std::thread::sleep(Duration::from_millis(200));
+    ear.stop_sound().expect("stop sound");
+}

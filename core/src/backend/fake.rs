@@ -57,6 +57,10 @@ impl FakeFailure {
 pub struct PlaybackLog {
     pub written: Vec<i16>,
     pub stopped: bool,
+    /// How often the speaker was opened and let go. Releasing an idle
+    /// device shows up nowhere else.
+    pub opens: usize,
+    pub closes: usize,
 }
 
 pub struct FakeBackend {
@@ -227,7 +231,9 @@ impl OutputStream for FakeOutput {
     }
 
     fn stop(&mut self) -> Result<()> {
-        self.log.lock().unwrap_or_else(|e| e.into_inner()).stopped = true;
+        let mut log = self.log.lock().unwrap_or_else(|e| e.into_inner());
+        log.stopped = true;
+        log.closes += 1;
         Ok(())
     }
 }
@@ -257,6 +263,10 @@ impl AudioBackend for FakeBackend {
         if let Some(failure) = self.setup.output_error {
             return Err(failure.to_error(Device::Output));
         }
+        self.playback
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .opens += 1;
         Ok(Box::new(FakeOutput {
             paced: self.setup.paced,
             due: None,

@@ -364,3 +364,190 @@ fn run(mut speaker: Speaker, shared: Arc<Shared>, dispatcher: Arc<Dispatcher>, h
 
     speaker.release();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::fake::{FakeBackend, PlaybackLog};
+    use crate::backend::{AudioBackend, FormatRequest};
+
+    /// Long enough for a worker thread to get there, short enough that
+    /// a broken one fails the run rather than hanging it.
+    fn wait_until(mut done: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if done() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        false
+    }
+
+    fn sound(id: &str, samples: usize) -> RegisteredSound {
+        RegisteredSound {
+            id: id.to_string(),
+            samples: vec![1_000; samples],
+            format: AudioFormat::mono_16k(),
+            volume: 1.0,
+        }
+    }
+
+    struct Rig {
+        player: Player,
+        log: Arc<Mutex<PlaybackLog>>,
+        events: Arc<Mutex<Vec<Event>>>,
+    }
+
+    impl Rig {
+        fn counts(&self) -> (usize, usize) {
+            let log = self.log.lock().unwrap_or_else(|e| e.into_inner());
+            (log.opens, log.closes)
+        }
+
+        fn written(&self) -> usize {
+            self.log
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .written
+                .len()
+        }
+    }
+
+    /// A player over a fake speaker. `refuse` is raised to make every
+    /// later open fail, which is how a device lost while idle looks.
+    fn rig(idle: Duration, refuse: Arc<AtomicBool>) -> Rig {
+        let backend = Arc::new(Mutex::new(FakeBackend::silent()));
+        let log = Arc::clone(&backend.lock().unwrap_or_else(|e| e.into_inner()).playback);
+        let request = FormatRequest {
+            device: None,
+            wanted: Some(AudioFormat::mono_16k()),
+        };
+        let first = backend
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .open_output(&request)
+            .expect("the first open");
+
+        let open: OpenOutput = {
+            let backend = Arc::clone(&backend);
+            Box::new(move || {
+                if refuse.load(Ordering::Relaxed) {
+                    return Err(Error::NoDevice(Device::Output));
+                }
+                backend
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .open_output(&request)
+            })
+        };
+
+        let dispatcher = Arc::new(Dispatcher::new(64));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&events);
+        dispatcher.set_handler(Box::new(move |event| {
+            sink.lock().unwrap_or_else(|e| e.into_inner()).push(event);
+        }));
+
+        Rig {
+            player: Player::start_with_idle(first, open, dispatcher, idle)
+                .expect("the player thread"),
+            log,
+            events,
+        }
+    }
+
+    fn willing(idle: Duration) -> Rig {
+        rig(idle, Arc::new(AtomicBool::new(false)))
+    }
+
+    #[test]
+    fn a_speaker_nothing_is_playing_on_is_let_go() {
+        let rig = willing(Duration::from_millis(30));
+        assert!(
+            wait_until(|| rig.counts().1 == 1),
+            "an idle speaker must be released"
+        );
+        assert_eq!(rig.counts().0, 1, "and not opened again while it is quiet");
+    }
+
+    #[test]
+    fn a_sound_opens_the_speaker_again() {
+        let rig = willing(Duration::from_millis(30));
+        assert!(wait_until(|| rig.counts().1 == 1), "released while idle");
+
+        rig.player.play(sound("alert", 400), false);
+        assert!(
+            wait_until(|| rig.counts().0 == 2),
+            "playing must open the speaker again"
+        );
+        assert!(
+            wait_until(|| rig.written() >= 400),
+            "and the audio must reach it"
+        );
+    }
+
+    #[test]
+    fn a_sound_following_another_finds_the_speaker_still_open() {
+        let rig = willing(Duration::from_secs(30));
+
+        rig.player.play(sound("first", 400), false);
+        assert!(wait_until(|| rig.written() >= 400), "the first sound plays");
+        rig.player.play(sound("second", 400), false);
+        assert!(
+            wait_until(|| rig.written() >= 800),
+            "and so does the second"
+        );
+
+        assert_eq!(
+            rig.counts(),
+            (1, 0),
+            "one open, no close: the device was never let go between them"
+        );
+    }
+
+    #[test]
+    fn a_speaker_that_will_not_come_back_is_reported_and_strands_nobody() {
+        let refuse = Arc::new(AtomicBool::new(false));
+        let rig = rig(Duration::from_millis(30), Arc::clone(&refuse));
+        assert!(wait_until(|| rig.counts().1 == 1), "released while idle");
+
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&told);
+        rig.player.on_finished(move |id| {
+            sink.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(id.to_string())
+        });
+
+        refuse.store(true, Ordering::Relaxed);
+        rig.player.play(sound("alert", 400), false);
+
+        assert!(
+            wait_until(|| rig
+                .events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|e| matches!(e, Event::DeviceError { .. }))),
+            "a speaker that will not open again must be reported"
+        );
+        assert!(
+            wait_until(|| told
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|id| id == "alert")),
+            "and whatever waits on the sound must still be let go"
+        );
+        assert_eq!(rig.written(), 0, "nothing was played");
+        assert!(
+            !rig.events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|e| matches!(e, Event::SoundFinished { .. })),
+            "a sound that never played did not finish"
+        );
+    }
+}
