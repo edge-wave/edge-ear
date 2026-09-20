@@ -29,7 +29,7 @@ fn the_readme_second_example(
     phrase: &Path,
 ) -> Result<()> {
     ear.load_wake_features(spectrogram, features)?;
-    ear.add_wake_model("hey_jarvis", phrase)?;
+    ear.add_wake_model(None, phrase)?;
     ear.enable_wake(None)?;
     ear.enable_speech()?;
 

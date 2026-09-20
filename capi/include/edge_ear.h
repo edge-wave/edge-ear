@@ -586,7 +586,8 @@ int32_t edge_ear_load_wake_features(edge_ear_h ear, const char *spectrogram, con
  * refused by name of what was wrong.
  *
  * @param[in] ear the handle
- * @param[in] name what detections of this word are called
+ * @param[in] name what detections of this word are called, or NULL to
+ *            call it after its file
  * @param[in] path path to the wake word model
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
  * @see edge_ear_load_wake_features, edge_ear_enable_wake

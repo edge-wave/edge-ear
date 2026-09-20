@@ -503,8 +503,9 @@ impl EdgeEar {
     }
 
     /// Add a phrase to listen for, under the name its detections carry.
-    /// Several can be listened for at once.
-    fn add_wake_model(&self, name: &str, path: PathBuf) -> PyResult<()> {
+    /// Without a name it is called after its file.
+    #[pyo3(signature = (path, name = None))]
+    fn add_wake_model(&self, path: PathBuf, name: Option<&str>) -> PyResult<()> {
         self.core.add_wake_model(name, &path).map_err(to_py)
     }
 

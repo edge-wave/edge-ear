@@ -57,7 +57,7 @@ fn every_entry_point() -> Vec<Call> {
         }),
         call("set_wake_threshold", |e| e.set_wake_threshold(0.5)),
         call("add_wake_model", |e| {
-            e.add_wake_model("w", Path::new("w.onnx"))
+            e.add_wake_model(Some("w"), Path::new("w.onnx"))
         }),
         call("remove_wake_model", |e| e.remove_wake_model("w")),
         call("set_wake_word_threshold", |e| {

@@ -315,7 +315,8 @@ pub unsafe extern "C" fn edge_ear_load_wake_features(
 /// refused by name of what was wrong.
 ///
 /// @param[in] ear the handle
-/// @param[in] name what detections of this word are called
+/// @param[in] name what detections of this word are called, or NULL to
+///            call it after its file
 /// @param[in] path path to the wake word model
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
 /// @see edge_ear_load_wake_features, edge_ear_enable_wake
@@ -326,7 +327,7 @@ pub unsafe extern "C" fn edge_ear_add_wake_model(
     path: *const c_char,
 ) -> i32 {
     with!(ear, e => {
-        let name = ok_or_return!(required_str(name, "the wake word name"));
+        let name = ok_or_return!(optional_str(name, "the wake word name"));
         let path = ok_or_return!(required_str(path, "the model path"));
         report(e.core.add_wake_model(name, Path::new(path)))
     })

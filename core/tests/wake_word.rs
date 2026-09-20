@@ -29,7 +29,7 @@ fn listening_without_a_model_says_one_is_needed() {
 fn a_wake_word_without_the_shared_models_says_what_is_missing() {
     let ear = ear();
     let err = ear
-        .add_wake_model("anything", &PathBuf::from("anything.onnx"))
+        .add_wake_model(Some("anything"), &PathBuf::from("anything.onnx"))
         .expect_err("must refuse");
     assert!(matches!(err, Error::NoWakeModel), "{err}");
 }
@@ -53,7 +53,7 @@ fn models_cannot_be_swapped_while_capture_runs() {
 
     for result in [
         ear.load_wake_features(&PathBuf::from("a.onnx"), &PathBuf::from("b.onnx")),
-        ear.add_wake_model("c", &PathBuf::from("c.onnx")),
+        ear.add_wake_model(Some("c"), &PathBuf::from("c.onnx")),
     ] {
         let err = result.expect_err("must refuse");
         assert!(matches!(err, Error::RunningNotAllowed { .. }), "{err}");
@@ -100,7 +100,7 @@ fn a_wake_word_can_be_switched_on_and_off_around_a_run() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model(Some("hey_jarvis"), &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
 
     // Accepted before capture starts, and in force once it does.
@@ -131,7 +131,7 @@ fn silence_is_never_reported_as_the_wake_word() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model(Some("hey_jarvis"), &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
 
     let heard = Arc::new(Mutex::new(Vec::new()));
@@ -167,7 +167,7 @@ fn a_model_that_is_not_a_wake_word_is_refused() {
     .unwrap();
 
     let err = ear
-        .add_wake_model("embedding", &dir.join("embedding_model.onnx"))
+        .add_wake_model(Some("embedding"), &dir.join("embedding_model.onnx"))
         .expect_err("must refuse");
     assert!(matches!(err, Error::ModelInvalid { .. }), "{err}");
     println!("{err}");
@@ -180,11 +180,39 @@ fn a_name_that_would_not_survive_being_handed_to_c_is_refused() {
     let ear = ear();
     for name in ["", " ", "a\0b", "two\nlines", "\u{7}bell"] {
         let err = ear
-            .add_wake_model(name, &PathBuf::from("anything.onnx"))
+            .add_wake_model(Some(name), &PathBuf::from("anything.onnx"))
             .expect_err("must refuse");
         assert!(matches!(err, Error::InvalidValue { .. }), "{name:?}: {err}");
     }
     assert!(ear.wake_models().is_empty(), "a refused name was kept");
+}
+
+/// Unnamed, a word is called after its file, and the space around a
+/// name given by hand belongs to neither adding nor looking up.
+#[test]
+#[ignore]
+fn a_word_is_named_after_its_file_and_found_without_the_space() {
+    let Some(dir) = model_dir() else {
+        println!("set EDGE_EAR_WAKE_DIR to run this");
+        return;
+    };
+    let ear = ear();
+    ear.load_wake_features(
+        &dir.join("melspectrogram.onnx"),
+        &dir.join("embedding_model.onnx"),
+    )
+    .unwrap();
+
+    let word = dir.join("hey_jarvis_v0.1.onnx");
+    ear.add_wake_model(None, &word).unwrap();
+    ear.add_wake_model(Some("  spaced  "), &word).unwrap();
+    assert_eq!(ear.wake_models(), ["hey_jarvis_v0.1", "spaced"]);
+
+    assert!(ear.wake_score(" spaced ").unwrap().is_none(), "not running");
+    ear.set_wake_word_threshold("spaced ", Some(0.7)).unwrap();
+    assert_eq!(ear.wake_word_threshold(" spaced").unwrap(), 0.7);
+    ear.remove_wake_model(" spaced ").unwrap();
+    assert_eq!(ear.wake_models(), ["hey_jarvis_v0.1"]);
 }
 
 #[test]
@@ -207,7 +235,7 @@ fn scores_are_reported_even_when_they_fall_short() {
         &dir.join("embedding_model.onnx"),
     )
     .unwrap();
-    ear.add_wake_model("hey_jarvis", &dir.join("hey_jarvis_v0.1.onnx"))
+    ear.add_wake_model(Some("hey_jarvis"), &dir.join("hey_jarvis_v0.1.onnx"))
         .unwrap();
     ear.enable_wake(None).unwrap();
     ear.start().unwrap();
