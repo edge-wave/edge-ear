@@ -55,9 +55,8 @@ struct Inner {
     /// Live only while capturing. Rebuilt on every start, because the
     /// conversion pipeline is fixed when the thread comes up.
     consumers: Vec<Consumer>,
-    /// The one owner of the speaker. Opened when the first sound is
-    /// wanted, not at start, so an application that never plays
-    /// anything never claims the device.
+    /// The one owner of the speaker, made when the first sound is
+    /// wanted. It holds the device only while something is playing.
     player: Option<Arc<Player>>,
     sounds: Arc<Mutex<Registry>>,
     /// Runs while capture runs. Detection happens on its own thread, so
@@ -125,7 +124,9 @@ impl Inner {
 pub struct EdgeEar {
     inner: Mutex<Inner>,
     dispatcher: Arc<Dispatcher>,
-    backend: Mutex<Box<dyn AudioBackend>>,
+    /// Shared rather than owned outright, because the player has to
+    /// reach it to open the speaker again after an idle close.
+    backend: Arc<Mutex<Box<dyn AudioBackend>>>,
 }
 
 impl EdgeEar {
@@ -190,7 +191,7 @@ impl EdgeEar {
                 opened_input: None,
             }),
             dispatcher: Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY)),
-            backend: Mutex::new(backend),
+            backend: Arc::new(Mutex::new(backend)),
         })
     }
 
@@ -683,11 +684,28 @@ impl EdgeEar {
             "the speaker would not open",
             self.backend_lock().open_output(&request),
         )?;
+
+        // The player needs a way back to the device. The format is
+        // pinned, because sounds are decoded into the first one.
+        let format = stream.format();
+        let reopen = {
+            let backend = Arc::clone(&self.backend);
+            let request = FormatRequest {
+                device: request.device.clone(),
+                wanted: Some(format),
+            };
+            Box::new(move || {
+                backend
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .open_output(&request)
+            })
+        };
+
         let player = Arc::new(note_failure(
             "the playback thread would not start",
-            Player::start(stream, Arc::clone(&self.dispatcher)),
+            Player::start(stream, reopen, Arc::clone(&self.dispatcher)),
         )?);
-        let format = player.format();
 
         let mut inner = self.alive_mut()?;
         // Another thread may have opened it while the device was being
