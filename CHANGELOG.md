@@ -25,6 +25,18 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 
 ### Changed
 
+- The speaker is let go once nothing has played on it for two seconds,
+  and taken again for the next sound. It used to be held from the first
+  registered sound until the handle was destroyed, writing silence to
+  the device the whole time, so the hardware never powered down and the
+  sink stayed claimed against other applications. A sound following
+  another still finds the device open; after the timeout the next one
+  pays about 25 ms to take it again, measured against PipeWire on an
+  idle USB sink. Nothing in the API changed, and `play_sound` still
+  returns at once, because the device is taken on the player thread.
+  A speaker that will not come back, or that comes back at a different
+  format from the one its sounds were decoded into, is reported as
+  `DeviceError` and the sound is dropped rather than played wrong.
 - `load_wake_model(path)` is replaced by `add_wake_model(name, path)`,
   in C as `edge_ear_add_wake_model` (breaking).
 - `Event::WakeDetected` carries the `word` that was heard. The C event
