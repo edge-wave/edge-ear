@@ -252,7 +252,7 @@ fn nothing_hangs_when_called_in_the_wrong_order() {
     );
 }
 
-/// The speaker opens on the first sound and stays open, so what it is
+/// The first sound claims the speaker and the claim lasts, so what it is
 /// opened at is fixed from then rather than from the start of capture.
 #[test]
 fn the_settings_fixed_at_the_speaker_refuse_once_it_is_open() {
