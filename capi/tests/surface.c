@@ -98,7 +98,11 @@ int main(void)
     size_t count = 0;
     CHECK(edge_ear_get_input_devices(ear, &devices, &count) == EDGE_EAR_OK, "input devices");
     CHECK(count > 0, "at least one microphone");
-    CHECK(devices[0].id != NULL && devices[0].name != NULL, "device strings");
+    /* An empty list is a failure already counted, and reading the first
+     * of none would crash before anything could be reported. */
+    if (count > 0) {
+        CHECK(devices[0].id != NULL && devices[0].name != NULL, "device strings");
+    }
     CHECK(edge_ear_get_output_devices(ear, &devices, &count) == EDGE_EAR_OK, "output devices");
     /* A name is taken as given and checked when capture starts, which
      * is what the Rust side does and what its tests pin down. */
@@ -107,9 +111,11 @@ int main(void)
     CHECK(edge_ear_get_input_device_formats(ear, NULL, &formats, &formats_count)
               == EDGE_EAR_OK, "input formats");
     CHECK(formats_count > 0, "the default microphone offered something");
-    CHECK(formats[0].channels > 0, "a format names its channels");
-    CHECK(formats[0].min_sample_rate <= formats[0].max_sample_rate,
-          "a format's span runs the right way");
+    if (formats_count > 0) {
+        CHECK(formats[0].channels > 0, "a format names its channels");
+        CHECK(formats[0].min_sample_rate <= formats[0].max_sample_rate,
+              "a format's span runs the right way");
+    }
     CHECK(edge_ear_get_output_device_formats(ear, NULL, &formats, &formats_count)
               == EDGE_EAR_OK, "output formats");
     CHECK(formats_count > 0, "the default speaker offered something");
