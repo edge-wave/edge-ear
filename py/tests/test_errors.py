@@ -73,7 +73,7 @@ def test_a_name_c_could_not_carry_is_refused():
     with edge_ear.EdgeEar() as ear:
         for name in ("", " ", "a\0b", "two\nlines"):
             with pytest.raises(edge_ear.InvalidValue):
-                ear.add_wake_model(name, "anything.onnx")
+                ear.add_wake_model("anything.onnx", name)
         assert ear.wake_models == []
 
 

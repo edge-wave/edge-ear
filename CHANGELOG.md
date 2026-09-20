@@ -19,7 +19,9 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
   C and Python have the same calls, and a new `UnknownWakeWord` error
   (`EDGE_EAR_UNKNOWN_WAKE_WORD` in C) names a word that was never added.
   A name must have something in it and no control characters, since it
-  is handed to C as text where one would cut the name short.
+  is handed to C as text where one would cut the name short. Without a
+  name a word is called after its file, and the space around a name is
+  taken off both when it is added and when it is looked up.
 
 ### Changed
 

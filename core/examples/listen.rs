@@ -224,9 +224,8 @@ fn set_up_wake(ear: &EdgeEar) -> Result<bool, Box<dyn std::error::Error>> {
         &dir.join("embedding_model.onnx"),
     )?;
     for file in words.split(',').map(str::trim).filter(|f| !f.is_empty()) {
-        // Named after the file, so hey_jarvis_v0.1.onnx is heard as hey_jarvis_v0.1.
-        let name = file.strip_suffix(".onnx").unwrap_or(file);
-        ear.add_wake_model(name, &dir.join(file))?;
+        // Unnamed, so each word is called after its own file.
+        ear.add_wake_model(None, &dir.join(file))?;
     }
 
     if let Ok(text) = std::env::var("EDGE_EAR_WAKE_SETTLE") {

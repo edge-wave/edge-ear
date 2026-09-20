@@ -106,10 +106,13 @@ impl Inner {
             .collect()
     }
 
+    /// Names are looked up as they are stored, with the space around
+    /// them taken off, so one typed with a stray space still finds it.
     fn wake_word_index(&self, name: &str) -> Result<usize> {
+        let wanted = name.trim();
         self.wake_words
             .iter()
-            .position(|w| w.name == name)
+            .position(|w| w.name == wanted)
             .ok_or_else(|| Error::UnknownWakeWord(name.to_string()))
     }
 
@@ -421,21 +424,22 @@ impl EdgeEar {
     }
 
     /// Add a phrase to listen for, under the name its detections carry.
-    /// Several are heard at once, and a name already in use is replaced.
-    pub fn add_wake_model(&self, name: &str, path: &Path) -> Result<()> {
+    /// Without a name it is called after its file. Several are heard at
+    /// once, and a name already in use is replaced.
+    pub fn add_wake_model(&self, name: Option<&str>, path: &Path) -> Result<()> {
         let mut inner = self.stopped_only("the wake word models")?;
-        check_wake_name(name)?;
+        let name = wake_name(name, path)?;
         let (spectrogram, features) = inner.wake_models.clone().ok_or(Error::NoWakeModel)?;
         let mut model = WakeModel::new(&spectrogram, &features)?;
         model.add_word(path)?;
         log::info!("wake word {name:?} loaded from {}", path.display());
 
         let word = WakeWord {
-            name: name.to_string(),
+            name: name.clone(),
             path: path.to_path_buf(),
             threshold: None,
         };
-        match inner.wake_word_index(name) {
+        match inner.wake_word_index(&name) {
             Ok(i) => inner.wake_words[i] = word,
             Err(_) => inner.wake_words.push(word),
         }
@@ -1097,15 +1101,27 @@ pub(crate) fn join_worker(worker: JoinHandle<()>, what: &str) {
 
 /// A wake word name has to survive being handed to C as text, where a
 /// control character would cut it short or lose it altogether.
-fn check_wake_name(name: &str) -> Result<()> {
-    if name.trim().is_empty() || name.chars().any(char::is_control) {
+fn wake_name(given: Option<&str>, path: &Path) -> Result<String> {
+    // Without a name, the file stands for the phrase: the file is all
+    // that says which phrase a model holds.
+    let name = match given {
+        Some(name) => name.trim().to_string(),
+        None => path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().trim().to_string())
+            .unwrap_or_default(),
+    };
+    if name.is_empty() || name.chars().any(char::is_control) {
         return Err(Error::InvalidValue {
             setting: "wake word name",
             expected: "a name with something in it and no control characters".to_string(),
-            got: format!("{name:?}"),
+            got: match given {
+                Some(given) => format!("{given:?}"),
+                None => format!("nothing usable in {}", path.display()),
+            },
         });
     }
-    Ok(())
+    Ok(name)
 }
 
 /// Say why something failed on the way up. The caller is told as well,
@@ -1162,6 +1178,34 @@ mod tests {
     use backend::fake::FakeBackend;
     use config::SampleType;
     use std::time::Duration;
+
+    #[test]
+    fn a_word_with_no_name_is_called_after_its_file() {
+        let named = wake_name(None, Path::new("/models/hey_jarvis_v0.1.onnx"));
+        assert_eq!(named.unwrap(), "hey_jarvis_v0.1");
+    }
+
+    #[test]
+    fn the_space_around_a_name_is_not_part_of_it() {
+        assert_eq!(
+            wake_name(Some("  jarvis  "), Path::new("w.onnx")).unwrap(),
+            "jarvis"
+        );
+    }
+
+    #[test]
+    fn a_name_nothing_could_carry_is_refused() {
+        for given in ["", "   ", "a\0b", "two\nlines"] {
+            let err = wake_name(Some(given), Path::new("w.onnx")).expect_err("must refuse");
+            assert!(
+                matches!(err, Error::InvalidValue { .. }),
+                "{given:?}: {err}"
+            );
+        }
+        // A path with no file in it has no name to offer either.
+        let err = wake_name(None, Path::new("/")).expect_err("must refuse");
+        assert!(matches!(err, Error::InvalidValue { .. }), "{err}");
+    }
 
     fn ear() -> EdgeEar {
         EdgeEar::with_backend(Box::new(FakeBackend::silent())).unwrap()

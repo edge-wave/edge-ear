@@ -38,7 +38,7 @@ That is the whole thing. Detectors are off until you switch them on:
 
 ```rust
 ear.load_wake_features(&spectrogram, &features)?;
-ear.add_wake_model("hey_jarvis", &phrase)?;
+ear.add_wake_model(None, &phrase)?;
 ear.enable_wake(None)?;
 ear.enable_speech()?;
 
@@ -51,9 +51,11 @@ ear.on_event(|event| match event {
 })?;
 ```
 
-Add more words with `add_wake_model` to listen for them together. The
-two feature models run once for all of them, so each extra word costs
-only its own small model. Each word can have its own threshold through
+The word is called after its file unless you name it, so a detection
+of `hey_jarvis_v0.1.onnx` arrives as `hey_jarvis_v0.1`. Add more words
+with `add_wake_model` to listen for them together: the two feature
+models run once for all of them, so each extra word costs only its own
+small model. Each word can have its own threshold through
 `set_wake_word_threshold`.
 
 ## Models

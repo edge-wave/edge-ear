@@ -55,9 +55,12 @@ int main(void)
               == EDGE_EAR_MODEL_NOT_FOUND, "missing feature models");
 
     CHECK(edge_ear_add_wake_model(ear, "w", NULL) == EDGE_EAR_NULL_ARGUMENT, "null path");
-    CHECK(edge_ear_add_wake_model(ear, NULL, "w.onnx") == EDGE_EAR_NULL_ARGUMENT, "null word");
-    CHECK(edge_ear_add_wake_model(ear, "", "w.onnx") == EDGE_EAR_INVALID_VALUE,
-          "empty word name");
+    /* No name means the file names it, so this gets as far as the
+     * models that have not been supplied yet. */
+    CHECK(edge_ear_add_wake_model(ear, NULL, "w.onnx") == EDGE_EAR_NO_WAKE_MODEL,
+          "a word named after its file");
+    CHECK(edge_ear_add_wake_model(ear, "  ", "w.onnx") == EDGE_EAR_INVALID_VALUE,
+          "a name of nothing but space");
     CHECK(edge_ear_remove_wake_model(ear, "w") == EDGE_EAR_UNKNOWN_WAKE_WORD,
           "remove unknown word");
     const char *const *words = NULL;
