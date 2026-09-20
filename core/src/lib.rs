@@ -424,13 +424,7 @@ impl EdgeEar {
     /// Several are heard at once, and a name already in use is replaced.
     pub fn add_wake_model(&self, name: &str, path: &Path) -> Result<()> {
         let mut inner = self.stopped_only("the wake word models")?;
-        if name.is_empty() {
-            return Err(Error::InvalidValue {
-                setting: "wake word name",
-                expected: "a name that is not empty".to_string(),
-                got: "an empty name".to_string(),
-            });
-        }
+        check_wake_name(name)?;
         let (spectrogram, features) = inner.wake_models.clone().ok_or(Error::NoWakeModel)?;
         let mut model = WakeModel::new(&spectrogram, &features)?;
         model.add_word(path)?;
@@ -1099,6 +1093,19 @@ pub(crate) fn join_worker(worker: JoinHandle<()>, what: &str) {
     if worker.join().is_err() {
         log::error!("the {what} thread panicked");
     }
+}
+
+/// A wake word name has to survive being handed to C as text, where a
+/// control character would cut it short or lose it altogether.
+fn check_wake_name(name: &str) -> Result<()> {
+    if name.trim().is_empty() || name.chars().any(char::is_control) {
+        return Err(Error::InvalidValue {
+            setting: "wake word name",
+            expected: "a name with something in it and no control characters".to_string(),
+            got: format!("{name:?}"),
+        });
+    }
+    Ok(())
 }
 
 /// Say why something failed on the way up. The caller is told as well,

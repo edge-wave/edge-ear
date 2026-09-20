@@ -18,6 +18,8 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
   `set_wake_word_threshold`, and `set_wake_threshold` covers the rest.
   C and Python have the same calls, and a new `UnknownWakeWord` error
   (`EDGE_EAR_UNKNOWN_WAKE_WORD` in C) names a word that was never added.
+  A name must have something in it and no control characters, since it
+  is handed to C as text where one would cut the name short.
 
 ### Changed
 
