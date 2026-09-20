@@ -173,6 +173,20 @@ fn a_model_that_is_not_a_wake_word_is_refused() {
     println!("{err}");
 }
 
+/// The name is handed to C as text later, where a control character
+/// would cut it short or lose it altogether.
+#[test]
+fn a_name_that_would_not_survive_being_handed_to_c_is_refused() {
+    let ear = ear();
+    for name in ["", " ", "a\0b", "two\nlines", "\u{7}bell"] {
+        let err = ear
+            .add_wake_model(name, &PathBuf::from("anything.onnx"))
+            .expect_err("must refuse");
+        assert!(matches!(err, Error::InvalidValue { .. }), "{name:?}: {err}");
+    }
+    assert!(ear.wake_models().is_empty(), "a refused name was kept");
+}
+
 #[test]
 fn a_score_is_asked_for_by_the_name_of_a_loaded_word() {
     let ear = ear();

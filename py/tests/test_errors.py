@@ -68,6 +68,15 @@ def test_playing_a_sound_nobody_registered_says_so():
             ear.play_sound("never-registered")
 
 
+def test_a_name_c_could_not_carry_is_refused():
+    # The name reaches C as text, where a NUL would cut it short.
+    with edge_ear.EdgeEar() as ear:
+        for name in ("", " ", "a\0b", "two\nlines"):
+            with pytest.raises(edge_ear.InvalidValue):
+                ear.add_wake_model(name, "anything.onnx")
+        assert ear.wake_models == []
+
+
 def test_a_wake_word_nobody_added_says_so():
     with edge_ear.EdgeEar() as ear:
         assert ear.wake_models == []
