@@ -478,7 +478,8 @@ pub unsafe extern "C" fn edge_ear_get_wake_alert(
 
 /// @brief How sure the detector must be before it says it heard.
 ///
-/// Applies to every word not given a threshold of its own.
+/// Applies to every word not given a threshold of its own. 0.5 by
+/// default.
 ///
 /// @param[in] ear the handle
 /// @param[in] value from 0.0 to 1.0
@@ -556,7 +557,7 @@ pub unsafe extern "C" fn edge_ear_get_wake_word_threshold(
 /// @brief How long to look away after hearing the word.
 ///
 /// Long enough that the same words are not heard twice on their way out
-/// of the pipeline.
+/// of the pipeline. 20 frames by default.
 ///
 /// @param[in] ear the handle
 /// @param[in] frames how many frames of 80 ms to ignore
@@ -641,6 +642,8 @@ pub unsafe extern "C" fn edge_ear_is_recording(ear: edge_ear_h) -> i32 {
 
 /// @brief How readily audio counts as speech.
 ///
+/// 0.5 by default.
+///
 /// @param[in] ear the handle
 /// @param[in] value from 0.0 to 1.0
 /// @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
@@ -651,6 +654,8 @@ pub unsafe extern "C" fn edge_ear_set_speech_threshold(ear: edge_ear_h, value: f
 }
 
 /// @brief How long the speaker must be quiet before a recording ends.
+///
+/// Three seconds by default.
 ///
 /// @param[in] ear the handle
 /// @param[in] seconds greater than zero
@@ -665,6 +670,8 @@ pub unsafe extern "C" fn edge_ear_set_silence_duration(ear: edge_ear_h, seconds:
 }
 
 /// @brief The longest a recording may run before it is handed over.
+///
+/// Thirty seconds by default.
 ///
 /// @param[in] ear the handle
 /// @param[in] seconds greater than the silence duration
@@ -681,6 +688,8 @@ pub unsafe extern "C" fn edge_ear_set_max_recording(ear: edge_ear_h, seconds: f6
 
 /// @brief How long to wait for anyone to speak at all.
 ///
+/// Ten seconds by default.
+///
 /// @param[in] ear the handle
 /// @param[in] seconds greater than zero
 /// @return #EDGE_EAR_OK or a negative #edge_ear_error. Taken on the
@@ -696,7 +705,8 @@ pub unsafe extern "C" fn edge_ear_set_no_speech_timeout(ear: edge_ear_h, seconds
 /// @brief How much audio from before the recording to include.
 ///
 /// So a word begun early is not cut off. Used by a recording the wake
-/// word opened as much as by one this application asked for.
+/// word opened as much as by one this application asked for. Zero by
+/// default, so no pre-roll audio is added until this is called.
 ///
 /// @param[in] ear the handle
 /// @param[in] seconds no more than the queue capacity
@@ -1293,7 +1303,7 @@ pub unsafe extern "C" fn edge_ear_set_format(
 
 /// @brief How much recent audio each queue keeps.
 ///
-/// This is the ceiling on the pre-roll.
+/// This is the ceiling on the pre-roll. Two seconds by default.
 ///
 /// @param[in] ear the handle
 /// @param[in] seconds at least as long as the pre-roll
