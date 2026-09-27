@@ -5,6 +5,15 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 0.y release may break the public API.
 
+## [Unreleased]
+
+### Fixed
+
+- Python no longer prints a panic when it exits with a handle still
+  open. The handle is destroyed during shutdown, and what the library
+  logged then tried to reach an interpreter that was already gone; it
+  is now dropped instead.
+
 ## [0.6.0]
 
 ### Added
