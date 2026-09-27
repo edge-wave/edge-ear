@@ -43,18 +43,49 @@ pyo3::create_exception!(edge_ear, ConversionError, EdgeEarError);
 /// Held so the cached levels can be dropped when Python's own change.
 static LOG_RESET: OnceLock<pyo3_log::ResetHandle> = OnceLock::new();
 
+/// The most detailed level core logs at.
+const LOG_LEVEL: log::LevelFilter = log::LevelFilter::Debug;
+
 /// Hand what core logs to Python's `logging`, under the `edge_ear`
 /// logger. Levels are cached on this side so the audio threads stay
 /// off the interpreter lock; `reset_logging` clears that cache.
 fn install_logging(py: Python<'_>) -> PyResult<()> {
-    let logger =
-        pyo3_log::Logger::new(py, pyo3_log::Caching::LoggersAndLevels)?.set_prefix("edge_ear");
+    let logger = pyo3_log::Logger::new(py, pyo3_log::Caching::LoggersAndLevels)?
+        .set_prefix("edge_ear")
+        .filter(LOG_LEVEL);
+    let handle = logger.reset_handle();
     // An application that installed its own logger keeps it, and core
     // then logs wherever that one sends it.
-    if let Ok(handle) = logger.install() {
+    if log::set_boxed_logger(Box::new(WhileInterpreterLives(logger))).is_ok() {
+        log::set_max_level(LOG_LEVEL);
         let _ = LOG_RESET.set(handle);
     }
     Ok(())
+}
+
+/// Passes records on only while Python can take them, since a handle
+/// destroyed during shutdown would otherwise panic reaching a finalized one.
+struct WhileInterpreterLives(pyo3_log::Logger);
+
+fn interpreter_lives() -> bool {
+    // SAFETY: Py_IsInitialized may be called at any time, from any thread.
+    unsafe { pyo3::ffi::Py_IsInitialized() != 0 }
+}
+
+impl log::Log for WhileInterpreterLives {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        interpreter_lives() && self.0.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record) {
+        if interpreter_lives() {
+            self.0.log(record);
+        }
+    }
+
+    fn flush(&self) {
+        self.0.flush();
+    }
 }
 
 /// Look at the Python logging levels again. Needed only when they are

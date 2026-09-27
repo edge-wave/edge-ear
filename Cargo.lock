@@ -357,6 +357,7 @@ name = "edge-ear-py"
 version = "0.6.0"
 dependencies = [
  "edge-ear-core",
+ "log",
  "pyo3",
  "pyo3-build-config",
  "pyo3-log",
