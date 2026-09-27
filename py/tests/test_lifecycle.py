@@ -1,6 +1,8 @@
 """Getting hold of the devices, and letting go of them again."""
 
 import struct
+import subprocess
+import sys
 
 import pytest
 
@@ -27,6 +29,17 @@ def test_the_with_block_releases_them_even_when_it_raises():
 
     with pytest.raises(edge_ear.Destroyed):
         ear_outside.start()
+
+
+def test_a_handle_left_open_at_exit_goes_quietly():
+    # Shutdown destroys the handle after the interpreter is finalized,
+    # and what core logs then must not try to reach Python.
+    script = "import edge_ear\near = edge_ear.EdgeEar()\n"
+    done = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+    assert done.returncode == 0, done.stderr
+    assert "panicked" not in done.stderr, done.stderr
 
 
 def test_start_and_stop_can_repeat():
