@@ -96,11 +96,16 @@ cargo build -p edge-ear-core --no-default-features \
 ## Building
 
 ```bash
-sudo apt install libasound2-dev pkg-config   # Linux; macOS needs nothing
-sudo apt install libpipewire-0.3-dev         # only for tinypipewire-backend
+sudo apt install libasound2-dev libssl-dev pkg-config   # Linux; macOS needs nothing
+sudo apt install libpipewire-0.3-dev                    # only for tinypipewire-backend
 cargo build --workspace
 cargo test --workspace
 ```
+
+The build downloads a prebuilt onnxruntime, which is where OpenSSL comes
+in, and that runtime sets the floor: glibc 2.38 on Linux, so Ubuntu
+24.04 or Debian 13 and the Raspberry Pi OS built on it, and macOS 13.4.
+On an older system the library still builds but fails to load.
 
 Tests that need a real microphone or a wake word model are marked
 ignored:
