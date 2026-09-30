@@ -269,6 +269,24 @@ mod tests {
     }
 
     #[test]
+    fn clearing_hands_back_what_was_queued_and_frees_a_waiting_writer() {
+        let ring = Arc::new(Ring::new(2));
+        ring.push(1);
+        ring.push(2);
+        let writer = {
+            let ring = Arc::clone(&ring);
+            thread::spawn(move || ring.push_before(3, Duration::from_secs(5)))
+        };
+        thread::sleep(Duration::from_millis(20));
+        let cleared = ring.clear();
+        assert!(cleared.starts_with(&[1, 2]), "cleared {cleared:?}");
+        assert!(
+            writer.join().expect("the writer").is_ok(),
+            "the writer got room"
+        );
+    }
+
+    #[test]
     fn delivers_in_order() {
         let ring = Ring::new(4);
         ring.push(1);
