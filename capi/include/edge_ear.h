@@ -89,8 +89,8 @@ enum edge_ear_event_kind
      */
     EDGE_EAR_EVENT_SPEECH_ENDED,
     /**
-     * A sound reached its own end. One that was stopped does not
-     * arrive here.
+     * A sound reached its own end and its last sample has been heard.
+     * One that was stopped does not arrive here.
      */
     EDGE_EAR_EVENT_SOUND_FINISHED,
     /**
@@ -977,6 +977,8 @@ int32_t edge_ear_stop_sound(edge_ear_h ear);
 
 /**
  * @brief Whether a sound is coming out of the speaker.
+ *
+ * Stays 1 until its last sample has been heard, not merely handed over.
  *
  * @param[in] ear the handle
  * @return 1 while playing, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a

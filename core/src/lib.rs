@@ -651,7 +651,8 @@ impl EdgeEar {
         Ok(())
     }
 
-    /// True while a sound is coming out of the speaker.
+    /// True while a sound is coming out of the speaker, up to its last
+    /// sample being heard.
     pub fn is_playing(&self) -> bool {
         let inner = self.lock();
         inner.player.as_ref().is_some_and(|p| p.is_playing())

@@ -7,6 +7,24 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 
 ## [Unreleased]
 
+### Added
+
+- `OutputStream::heard_at` says when a sample handed to a speaker comes
+  out of it, and `backend::playout::Playout` keeps that account for a
+  device callback. The method has a default, so a backend written
+  outside this library still builds; it then behaves as before.
+
+### Changed
+
+- `SoundFinished` now arrives once the last sample of a sound has been
+  heard, not when it was handed to the device. The device's own queue
+  and delay used to put it up to about 190 ms early on a 48 kHz stereo
+  speaker, and more on a slower one. `is_playing` stays true until the
+  same moment, and a recording that waits for the wake alert now opens
+  after the alert has actually been heard. cpal and tinypipewire both
+  report how far ahead of the speaker they run; a host that cannot say
+  is taken to be one buffer ahead.
+
 ### Fixed
 
 - Python no longer prints a panic when it exits with a handle still

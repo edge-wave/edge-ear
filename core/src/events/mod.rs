@@ -51,30 +51,22 @@ impl std::fmt::Display for EndReason {
 pub enum Event {
     /// One of the wake words was heard. `word` is the name it was
     /// added under, and `score` how sure the detector was of it.
-    WakeDetected {
-        word: String,
-        score: f32,
-    },
+    WakeDetected { word: String, score: f32 },
     SpeechEnded {
         audio: Vec<i16>,
         sample_rate: u32,
         reason: EndReason,
         duration: Duration,
     },
-    SoundFinished {
-        id: String,
-    },
+    /// A sound reached its own end and its last sample has been heard
+    /// from the speaker. One that was stopped is not reported.
+    SoundFinished { id: String },
     /// A device, or the work behind it, failed. One that repeats is
     /// reported once rather than for every block of audio.
-    DeviceError {
-        device: Device,
-        message: String,
-    },
+    DeviceError { device: Device, message: String },
     /// Notifications produced faster than they were consumed. Dropping
     /// the oldest keeps memory flat; this says how many went.
-    EventsDropped {
-        count: u64,
-    },
+    EventsDropped { count: u64 },
 }
 
 impl Event {
