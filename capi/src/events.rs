@@ -13,8 +13,8 @@ pub enum edge_ear_event_kind {
     EDGE_EAR_EVENT_WAKE_DETECTED = 1,
     /// A recording ended and the audio is here.
     EDGE_EAR_EVENT_SPEECH_ENDED,
-    /// A sound reached its own end. One that was stopped does not
-    /// arrive here.
+    /// A sound reached its own end and its last sample has been heard.
+    /// One that was stopped does not arrive here.
     EDGE_EAR_EVENT_SOUND_FINISHED,
     /// A device, or the work behind it, failed. One that repeats is
     /// reported once rather than for every block of audio.

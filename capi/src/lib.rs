@@ -880,6 +880,8 @@ pub unsafe extern "C" fn edge_ear_stop_sound(ear: edge_ear_h) -> i32 {
 
 /// @brief Whether a sound is coming out of the speaker.
 ///
+/// Stays 1 until its last sample has been heard, not merely handed over.
+///
 /// @param[in] ear the handle
 /// @return 1 while playing, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
 ///         null handle.
