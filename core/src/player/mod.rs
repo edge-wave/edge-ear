@@ -1,6 +1,7 @@
 pub mod envelope;
 pub mod registry;
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -17,6 +18,10 @@ use crate::player::registry::RegisteredSound;
 /// Samples handed to the device at a time.
 const WRITE_CHUNK: usize = 512;
 
+/// How often to look again while the device has not yet taken the end
+/// of a sound. Its callback tells nobody, so this is asked, not told.
+const HEARD_POLL: Duration = Duration::from_millis(5);
+
 /// How long the speaker may sit idle before it is let go. Long enough
 /// to cover one sound following another, short enough to free the device.
 const OUTPUT_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -32,12 +37,21 @@ struct Playing {
     repeat: bool,
 }
 
+/// A sound handed over in full, not yet heard to its end.
+struct Finishing {
+    id: String,
+    /// Where its last sample sits in what the stream was given.
+    end: u64,
+}
+
 #[derive(Default)]
 struct State {
     current: Option<Playing>,
     /// Raised by the application, so a natural end can be told apart
     /// from being cut short. Only a natural end is reported.
     stopped_by_application: bool,
+    /// Reported one by one as the speaker plays their last sample.
+    finishing: VecDeque<Finishing>,
 }
 
 /// What the player and its worker both hold.
@@ -56,6 +70,8 @@ struct Speaker {
     /// anything else cannot play them.
     format: AudioFormat,
     idle: Duration,
+    /// Samples handed to the open stream, which is where its positions count from.
+    written: u64,
 }
 
 /// Why the worker stopped waiting.
@@ -67,6 +83,8 @@ enum Next {
     },
     /// Nothing has played for long enough that the device should go.
     Close,
+    /// A sound handed over earlier may have been heard to its end by now.
+    Check,
     Stop,
 }
 
@@ -118,6 +136,7 @@ impl Player {
                 open,
                 format,
                 idle,
+                written: 0,
             };
             thread::Builder::new()
                 .name("edge-ear-player".to_string())
@@ -164,8 +183,10 @@ impl Player {
         cut
     }
 
+    /// True until the last sample of the last sound has been heard.
     pub fn is_playing(&self) -> bool {
-        self.lock().current.is_some()
+        let state = self.lock();
+        state.current.is_some() || !state.finishing.is_empty()
     }
 
     /// Told when a sound ends on its own. Replaces any earlier one.
@@ -203,9 +224,11 @@ impl Shared {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Park until there is audio, the idle deadline passes, or the
-    /// player stops. With no device open there is nothing to wake for.
-    fn wait_for_work(&self, deadline: Instant, open: bool) -> Next {
+    /// Park until there is audio, a finishing sound may be due, the idle
+    /// deadline passes, or the player stops.
+    /// `written` is what the open stream has been given, `None` with none open.
+    fn wait_for_work(&self, deadline: Instant, due: Option<Instant>, written: Option<u64>) -> Next {
+        let open = written.is_some();
         let mut guard = self.lock();
         loop {
             if self.stop.load(Ordering::Relaxed) {
@@ -226,24 +249,43 @@ impl Shared {
                     if playing.repeat {
                         playing.position = 0;
                     } else {
-                        ended = Some(playing.sound.id.clone());
+                        let id = playing.sound.id.clone();
+                        // Queued in the same breath, so the sound never looks finished early.
+                        guard.finishing.push_back(Finishing {
+                            id: id.clone(),
+                            end: written.unwrap_or(0) + block.len() as u64,
+                        });
+                        ended = Some(id);
                         guard.current = None;
                     }
                 }
                 return Next::Play { block, ended };
             }
-            if !open {
-                guard = self
-                    .wake
-                    .wait(guard)
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                continue;
+            if due.is_some_and(|due| due <= Instant::now()) {
+                return Next::Check;
             }
+            // With no device open there is nothing to wake for but a sound.
+            let wake_at = match (open, due) {
+                (false, None) => {
+                    guard = self
+                        .wake
+                        .wait(guard)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    continue;
+                }
+                // A sound still being heard keeps the device open.
+                (_, Some(due)) => due,
+                (true, None) => deadline,
+            };
             // What is checked is the deadline, not whether the timeout
             // fired, so a spurious wake does not start the wait over.
-            let left = deadline.saturating_duration_since(Instant::now());
+            let left = wake_at.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return Next::Close;
+                return if due.is_some() {
+                    Next::Check
+                } else {
+                    Next::Close
+                };
             }
             let (next, _) = self
                 .wake
@@ -256,7 +298,10 @@ impl Shared {
     /// Drop whatever was queued, naming it. Used when the device could
     /// not be had, so the same fault is not reported once per block.
     fn abandon_current(&self) -> Option<String> {
-        self.lock().current.take().map(|p| p.sound.id)
+        let mut state = self.lock();
+        // Nothing handed to a device that never opened will be heard.
+        state.finishing.clear();
+        state.current.take().map(|p| p.sound.id)
     }
 }
 
@@ -268,6 +313,7 @@ impl Speaker {
             Ok(stream) if stream.format() == self.format => {
                 log::debug!("the speaker was opened again at {:?}", self.format);
                 self.stream = Some(stream);
+                self.written = 0;
                 return true;
             }
             Ok(other) => format!(
@@ -301,12 +347,15 @@ fn run(mut speaker: Speaker, shared: Arc<Shared>, dispatcher: Arc<Dispatcher>, h
     let mut deadline = Instant::now() + speaker.idle;
 
     loop {
-        let (block, ended) = match shared.wait_for_work(deadline, speaker.stream.is_some()) {
+        let due = report_heard(&speaker, &shared, &dispatcher, &hooks);
+        let written = speaker.stream.is_some().then_some(speaker.written);
+        let (block, ended) = match shared.wait_for_work(deadline, due, written) {
             Next::Stop => break,
             Next::Close => {
                 speaker.release();
                 continue;
             }
+            Next::Check => continue,
             Next::Play { block, ended } => (block, ended),
         };
 
@@ -324,6 +373,7 @@ fn run(mut speaker: Speaker, shared: Arc<Shared>, dispatcher: Arc<Dispatcher>, h
         }
 
         if !block.is_empty() {
+            let length = block.len() as u64;
             let block = Samples::I16(block);
             let stream = speaker
                 .stream
@@ -347,22 +397,45 @@ fn run(mut speaker: Speaker, shared: Arc<Shared>, dispatcher: Arc<Dispatcher>, h
                     }
                 }
             }
+            speaker.written += length;
             // The idle clock runs from the last audio handed over.
             deadline = Instant::now() + speaker.idle;
-        }
-
-        // Only a sound that ran to its own end is reported. A sound the
-        // application stopped never gets here.
-        if let Some(id) = ended {
-            log::debug!("sound {id:?} finished");
-            if let Some(hook) = hooks.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-                hook(&id);
-            }
-            dispatcher.emit(Event::SoundFinished { id });
         }
     }
 
     speaker.release();
+}
+
+/// Report each sound whose last sample has now been heard, and say when
+/// to look again. Only a sound that ran to its own end gets here.
+fn report_heard(
+    speaker: &Speaker,
+    shared: &Shared,
+    dispatcher: &Dispatcher,
+    hooks: &Finished,
+) -> Option<Instant> {
+    loop {
+        let now = Instant::now();
+        let id = {
+            let mut state = shared.lock();
+            let next = state.finishing.front()?;
+            // With the device gone, nothing more of it will come out.
+            let heard = speaker
+                .stream
+                .as_ref()
+                .map_or(Some(now), |stream| stream.heard_at(next.end));
+            match heard {
+                Some(at) if at <= now => state.finishing.pop_front()?.id,
+                Some(at) => return Some(at),
+                None => return Some(now + HEARD_POLL),
+            }
+        };
+        log::debug!("sound {id:?} finished");
+        if let Some(hook) = hooks.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            hook(&id);
+        }
+        dispatcher.emit(Event::SoundFinished { id });
+    }
 }
 
 #[cfg(test)]

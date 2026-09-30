@@ -2,7 +2,9 @@
 //! drives time itself, so tests run fast and answer the same each run.
 
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use super::playout::Playout;
 use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
 use crate::capture::Samples;
 use crate::config::{AudioFormat, Device};
@@ -33,6 +35,9 @@ pub struct FakeSetup {
     /// asking whether something keeps up needs this, because keeping up
     /// means nothing against a device running flat out.
     pub paced: bool,
+    /// How long after the fake speaker takes audio it is heard, the way
+    /// a real device's own buffering delays it.
+    pub output_delay: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +124,13 @@ impl FakeBackend {
         backend
     }
 
+    /// A speaker heard only `delay` after it takes audio, as a real one is.
+    pub fn delayed_output(delay: Duration) -> Self {
+        let mut backend = Self::silent();
+        backend.setup.output_delay = delay;
+        backend
+    }
+
     /// Silence, delivered at the speed a real device would.
     pub fn paced() -> Self {
         let mut backend = Self::silent();
@@ -144,7 +156,7 @@ struct FakeInput {
     pace: Option<std::time::Duration>,
     /// When the next block is due. Absolute, so a late block does not
     /// push every block after it later still.
-    due: Option<std::time::Instant>,
+    due: Option<Instant>,
 }
 
 impl InputStream for FakeInput {
@@ -174,7 +186,7 @@ impl InputStream for FakeInput {
             // of slowing down, so catch up rather than sleeping again.
             let due = self.due.get_or_insert_with(std::time::Instant::now);
             *due += pace;
-            let now = std::time::Instant::now();
+            let now = Instant::now();
             if *due > now {
                 std::thread::sleep(*due - now);
             } else if now - *due > std::time::Duration::from_secs(1) {
@@ -194,10 +206,12 @@ impl InputStream for FakeInput {
 struct FakeOutput {
     format: AudioFormat,
     log: Arc<Mutex<PlaybackLog>>,
+    playout: Playout,
+    delay: Duration,
     /// Set when the speaker should take as long as a real one, on the
     /// same absolute schedule the microphone keeps.
     paced: bool,
-    due: Option<std::time::Instant>,
+    due: Option<Instant>,
 }
 
 impl OutputStream for FakeOutput {
@@ -208,9 +222,8 @@ impl OutputStream for FakeOutput {
     fn write(&mut self, samples: &Samples) -> Result<()> {
         if self.paced {
             let frames = samples.len() / self.format.channels.max(1) as usize;
-            let span =
-                std::time::Duration::from_secs_f64(frames as f64 / self.format.sample_rate as f64);
-            let now = std::time::Instant::now();
+            let span = Duration::from_secs_f64(frames as f64 / self.format.sample_rate as f64);
+            let now = Instant::now();
             let due = self.due.get_or_insert(now);
             // Idle between sounds, or late. Either way a real speaker
             // has run dry, so begin again rather than catching up.
@@ -227,7 +240,12 @@ impl OutputStream for FakeOutput {
                 .written
                 .extend(v.iter().map(|s| (s * i16::MAX as f32) as i16)),
         }
+        self.playout.took(samples.len(), self.delay);
         Ok(())
+    }
+
+    fn heard_at(&self, position: u64) -> Option<Instant> {
+        self.playout.heard_at(position)
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -254,7 +272,7 @@ impl AudioBackend for FakeBackend {
             pace: self.setup.paced.then(|| {
                 let format = self.setup.input_format.unwrap_or(AudioFormat::mono_16k());
                 let frames = self.setup.block_samples.max(1) / format.channels.max(1) as usize;
-                std::time::Duration::from_secs_f64(frames as f64 / format.sample_rate as f64)
+                Duration::from_secs_f64(frames as f64 / format.sample_rate as f64)
             }),
         }))
     }
@@ -267,11 +285,14 @@ impl AudioBackend for FakeBackend {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .opens += 1;
+        let format = req.wanted.unwrap_or(AudioFormat::mono_16k());
         Ok(Box::new(FakeOutput {
             paced: self.setup.paced,
             due: None,
-            format: req.wanted.unwrap_or(AudioFormat::mono_16k()),
+            format,
             log: Arc::clone(&self.playback),
+            playout: Playout::new(format),
+            delay: self.setup.output_delay,
         }))
     }
 
