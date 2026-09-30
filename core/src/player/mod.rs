@@ -52,6 +52,8 @@ struct State {
     stopped_by_application: bool,
     /// Reported one by one as the speaker plays their last sample.
     finishing: VecDeque<Finishing>,
+    /// Set by a stop, so the worker drops what the device still holds.
+    flush: bool,
 }
 
 /// What the player and its worker both hold.
@@ -85,6 +87,8 @@ enum Next {
     Close,
     /// A sound handed over earlier may have been heard to its end by now.
     Check,
+    /// The application stopped playback, so what is queued must go.
+    Flush,
     Stop,
 }
 
@@ -172,12 +176,14 @@ impl Player {
         self.shared.wake.notify_all();
     }
 
-    /// Cut playback short, naming what was cut. No completion event
-    /// follows, because the sound did not finish on its own.
-    pub fn stop_sound(&self) -> Option<String> {
+    /// Cut playback short, naming every sound cut, including any still
+    /// being heard. No completion event follows for them.
+    pub fn stop_sound(&self) -> Vec<String> {
         let mut state = self.lock();
-        let cut = state.current.take().map(|p| p.sound.id.clone());
+        let mut cut: Vec<String> = state.finishing.drain(..).map(|f| f.id).collect();
+        cut.extend(state.current.take().map(|p| p.sound.id));
         state.stopped_by_application = true;
+        state.flush = true;
         drop(state);
         self.shared.wake.notify_all();
         cut
@@ -233,6 +239,9 @@ impl Shared {
         loop {
             if self.stop.load(Ordering::Relaxed) {
                 return Next::Stop;
+            }
+            if std::mem::take(&mut guard.flush) {
+                return Next::Flush;
             }
             if let Some(playing) = guard.current.as_mut() {
                 let samples = &playing.sound.samples;
@@ -356,6 +365,13 @@ fn run(mut speaker: Speaker, shared: Arc<Shared>, dispatcher: Arc<Dispatcher>, h
                 continue;
             }
             Next::Check => continue,
+            Next::Flush => {
+                if let Some(stream) = speaker.stream.as_mut() {
+                    // Never taken, so later positions must not count them.
+                    speaker.written = speaker.written.saturating_sub(stream.flush());
+                }
+                continue;
+            }
             Next::Play { block, ended } => (block, ended),
         };
 

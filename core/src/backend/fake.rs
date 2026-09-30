@@ -66,6 +66,8 @@ pub struct PlaybackLog {
     /// device shows up nowhere else.
     pub opens: usize,
     pub closes: usize,
+    /// How often the speaker was told to drop what it had not played.
+    pub flushes: usize,
 }
 
 pub struct FakeBackend {
@@ -246,6 +248,12 @@ impl OutputStream for FakeOutput {
 
     fn heard_at(&self, position: u64) -> Option<Instant> {
         self.playout.heard_at(position)
+    }
+
+    fn flush(&mut self) -> u64 {
+        // Taken the moment it is written, so there is never anything to drop.
+        self.log.lock().unwrap_or_else(|e| e.into_inner()).flushes += 1;
+        0
     }
 
     fn stop(&mut self) -> Result<()> {

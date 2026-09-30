@@ -151,6 +151,14 @@ impl<T> Ring<T> {
         })
     }
 
+    /// Take out everything queued, for a speaker told to go quiet now.
+    #[allow(dead_code, reason = "used by device backends")]
+    pub fn clear(&self) -> Vec<T> {
+        let items = self.lock().items.drain(..).collect();
+        self.space.notify_all();
+        items
+    }
+
     /// Release every waiting reader with `Stopped`. Items already
     /// queued stay readable.
     pub fn close(&self) {

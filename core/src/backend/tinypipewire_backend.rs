@@ -352,6 +352,14 @@ impl OutputStream for TinypipewireOutput {
         self.playout.heard_at(position)
     }
 
+    fn flush(&mut self) -> u64 {
+        self.queue
+            .clear()
+            .iter()
+            .map(|block| block.len() as u64)
+            .sum()
+    }
+
     fn stop(&mut self) -> Result<()> {
         if let Some(stream) = self.stream.take() {
             if let Err(e) = stream.stop(true) {

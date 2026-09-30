@@ -83,6 +83,12 @@ pub trait OutputStream: Send {
         Some(Instant::now())
     }
 
+    /// Drop what was written but not yet taken by the device, and say how many
+    /// samples went. The default drops nothing, as a backend that cannot would.
+    fn flush(&mut self) -> u64 {
+        0
+    }
+
     fn stop(&mut self) -> Result<()>;
 }
 
