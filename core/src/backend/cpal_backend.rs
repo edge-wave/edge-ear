@@ -262,6 +262,14 @@ impl OutputStream for CpalOutput {
         self.playout.heard_at(position)
     }
 
+    fn flush(&mut self) -> u64 {
+        self.queue
+            .clear()
+            .iter()
+            .map(|block| block.len() as u64)
+            .sum()
+    }
+
     fn stop(&mut self) -> Result<()> {
         self.gate.signal_stop();
         self.queue.close();

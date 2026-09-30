@@ -639,11 +639,17 @@ impl EdgeEar {
     /// sound did not end on its own.
     pub fn stop_sound(&self) -> Result<()> {
         let inner = self.alive_mut()?;
-        let cut = inner.player.as_ref().and_then(|p| p.stop_sound());
+        let cut = inner
+            .player
+            .as_ref()
+            .map(|p| p.stop_sound())
+            .unwrap_or_default();
         // No completion event reports a sound that was cut, so the
         // recording behind an alert would wait for one that never came.
-        if cut.is_some()
-            && cut == inner.alert
+        if inner
+            .alert
+            .as_ref()
+            .is_some_and(|alert| cut.contains(alert))
             && let Some(speech) = inner.speech.as_ref()
         {
             alert_ended(speech, &inner.waiting_now);
