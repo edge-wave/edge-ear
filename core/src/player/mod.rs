@@ -490,7 +490,11 @@ mod tests {
     /// A player over a fake speaker. `refuse` is raised to make every
     /// later open fail, which is how a device lost while idle looks.
     fn rig(idle: Duration, refuse: Arc<AtomicBool>) -> Rig {
-        let backend = Arc::new(Mutex::new(FakeBackend::silent()));
+        rig_over(FakeBackend::silent(), idle, refuse)
+    }
+
+    fn rig_over(backend: FakeBackend, idle: Duration, refuse: Arc<AtomicBool>) -> Rig {
+        let backend = Arc::new(Mutex::new(backend));
         let log = Arc::clone(&backend.lock().unwrap_or_else(|e| e.into_inner()).playback);
         let request = FormatRequest {
             device: None,
@@ -621,6 +625,102 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Event::SoundFinished { .. })),
             "a sound that never played did not finish"
+        );
+    }
+
+    /// A speaker a fifth of a second behind what it is handed.
+    const DELAY: Duration = Duration::from_millis(200);
+
+    fn delayed() -> Rig {
+        rig_over(
+            FakeBackend::delayed_output(DELAY),
+            Duration::from_secs(30),
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    impl Rig {
+        fn finished(&self) -> Vec<String> {
+            self.events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .filter_map(|e| match e {
+                    Event::SoundFinished { id } => Some(id.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+    }
+
+    #[test]
+    fn a_sound_is_reported_finished_only_once_it_has_been_heard() {
+        let rig = delayed();
+        rig.player.play(sound("alert", 400), false);
+        assert!(
+            wait_until(|| rig.written() >= 400),
+            "the sound is handed over"
+        );
+        let handed = Instant::now();
+        assert!(
+            rig.player.is_playing(),
+            "and is still playing while it is heard"
+        );
+
+        assert!(wait_until(|| !rig.finished().is_empty()), "it finishes");
+        let waited = handed.elapsed();
+        assert!(
+            waited >= DELAY,
+            "finished {waited:?} after it was handed over, before the speaker played it"
+        );
+        assert!(!rig.player.is_playing(), "and is no longer playing");
+        assert_eq!(rig.finished(), ["alert"]);
+    }
+
+    #[test]
+    fn whatever_waits_on_a_sound_is_told_when_it_has_been_heard() {
+        let rig = delayed();
+        let told = Arc::new(Mutex::new(None));
+        let sink = Arc::clone(&told);
+        rig.player.on_finished(move |_| {
+            *sink.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+        });
+
+        rig.player.play(sound("alert", 400), false);
+        assert!(
+            wait_until(|| rig.written() >= 400),
+            "the sound is handed over"
+        );
+        let handed = Instant::now();
+        assert!(wait_until(|| told
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()));
+        let at = told
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .expect("told");
+        assert!(
+            at - handed >= DELAY,
+            "the gate opened before the alert was heard"
+        );
+    }
+
+    #[test]
+    fn a_sound_played_over_one_still_being_heard_leaves_both_reported() {
+        let rig = delayed();
+        rig.player.play(sound("first", 400), false);
+        assert!(
+            wait_until(|| rig.written() >= 400),
+            "the first is handed over"
+        );
+        rig.player.play(sound("second", 400), false);
+
+        assert!(wait_until(|| rig.finished().len() == 2), "both finish");
+        assert_eq!(
+            rig.finished(),
+            ["first", "second"],
+            "in the order they played"
         );
     }
 }

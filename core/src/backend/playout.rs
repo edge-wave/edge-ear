@@ -69,3 +69,40 @@ pub fn guessed_ahead(buffer_samples: usize, format: AudioFormat) -> Duration {
     let frames = buffer_samples / usize::from(format.channels.max(1));
     Duration::from_secs_f64(frames as f64 / f64::from(format.sample_rate.max(1)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nothing_is_heard_before_the_device_takes_it() {
+        let playout = Playout::new(AudioFormat::mono_16k());
+        assert!(playout.heard_at(1).is_none());
+        playout.took(1_600, Duration::ZERO);
+        assert!(playout.heard_at(1_600).is_some());
+        assert!(playout.heard_at(1_601).is_none());
+    }
+
+    #[test]
+    fn a_sample_is_heard_after_the_device_delay_and_those_before_it() {
+        let playout = Playout::new(AudioFormat::mono_16k());
+        let before = Instant::now();
+        // A tenth of a second of audio, a fifth of a second ahead.
+        playout.took(1_600, Duration::from_millis(200));
+
+        let end = playout.heard_at(1_600).expect("taken");
+        let middle = playout.heard_at(800).expect("taken");
+        assert!(end >= before + Duration::from_millis(300));
+        assert!(end < Instant::now() + Duration::from_millis(300));
+        assert_eq!(end - middle, Duration::from_millis(50));
+    }
+
+    #[test]
+    fn stereo_counts_frames_not_samples() {
+        let playout = Playout::new(AudioFormat::new(48_000, 2, crate::config::SampleType::F32));
+        playout.took(9_600, Duration::ZERO);
+        let end = playout.heard_at(9_600).expect("taken");
+        let start = playout.heard_at(0).expect("taken");
+        assert_eq!(end - start, Duration::from_millis(100));
+    }
+}
