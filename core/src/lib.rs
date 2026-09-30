@@ -635,8 +635,8 @@ impl EdgeEar {
         Ok(())
     }
 
-    /// Cut playback short. No completion event follows, because the
-    /// sound did not end on its own.
+    /// Cut playback short, including what the device still holds. No
+    /// completion event follows, because the sound did not end on its own.
     pub fn stop_sound(&self) -> Result<()> {
         let inner = self.alive_mut()?;
         let cut = inner
