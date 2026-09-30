@@ -4,8 +4,11 @@ pub mod cpal_backend;
 /// against this library needs a microphone giving known audio on
 /// demand. It touches no hardware and reaches nothing outside.
 pub mod fake;
+pub mod playout;
 #[cfg(all(feature = "tinypipewire-backend", target_os = "linux"))]
 pub mod tinypipewire_backend;
+
+use std::time::Instant;
 
 use crate::capture::Samples;
 use crate::config::{AudioFormat, Device, SampleType};
@@ -72,6 +75,13 @@ pub trait OutputStream: Send {
 
     /// Hand samples to the device. Returns once they are queued.
     fn write(&mut self, samples: &Samples) -> Result<()>;
+
+    /// When the sample at `position`, counted from the stream's first, is heard; `None`
+    /// until the device takes it. The default, for a backend that cannot tell, says at once.
+    fn heard_at(&self, position: u64) -> Option<Instant> {
+        let _ = position;
+        Some(Instant::now())
+    }
 
     fn stop(&mut self) -> Result<()>;
 }

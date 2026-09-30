@@ -6,11 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample, StreamConfig, SupportedStreamConfig};
 
+use super::playout::{Playout, guessed_ahead};
 use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
 use crate::capture::Samples;
 use crate::capture::ring::{LossReport, Ring};
@@ -239,6 +240,7 @@ impl Drop for CpalInput {
 
 pub struct CpalOutput {
     queue: Arc<Ring<Samples>>,
+    playout: Arc<Playout>,
     format: AudioFormat,
     gate: Arc<Gate>,
     owner: Option<JoinHandle<()>>,
@@ -254,6 +256,10 @@ impl OutputStream for CpalOutput {
         // is audible. Bounded, so a stopping player is never wedged.
         self.queue
             .push_before(samples.clone(), Duration::from_millis(100))
+    }
+
+    fn heard_at(&self, position: u64) -> Option<Instant> {
+        self.playout.heard_at(position)
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -316,7 +322,8 @@ impl Drain {
     }
 
     /// Fill one device buffer, with silence wherever the queue ran dry.
-    fn fill<T>(&mut self, out: &mut [T])
+    /// Returns how many samples were real audio.
+    fn fill<T>(&mut self, out: &mut [T]) -> usize
     where
         T: Sample + FromSample<i16> + FromSample<f32>,
     {
@@ -339,6 +346,7 @@ impl Drain {
             }
         }
         out[written..].fill(T::EQUILIBRIUM);
+        written
     }
 }
 
@@ -358,12 +366,12 @@ where
 
 /// A device takes whichever spelling it was opened with, and this
 /// library speaks all of the ones cpal names.
-fn fill_from_samples(data: &mut cpal::Data, format: SampleFormat, drain: &mut Drain) {
+fn fill_from_samples(data: &mut cpal::Data, format: SampleFormat, drain: &mut Drain) -> usize {
     fn hand<T: SizedSample + FromSample<i16> + FromSample<f32>>(
         data: &mut cpal::Data,
         drain: &mut Drain,
-    ) {
-        drain.fill(data.as_slice_mut::<T>().unwrap_or(&mut []));
+    ) -> usize {
+        drain.fill(data.as_slice_mut::<T>().unwrap_or(&mut []))
     }
 
     match format {
@@ -379,7 +387,7 @@ fn fill_from_samples(data: &mut cpal::Data, format: SampleFormat, drain: &mut Dr
         SampleFormat::U64 => hand::<u64>(data, drain),
         SampleFormat::F32 => hand::<f32>(data, drain),
         SampleFormat::F64 => hand::<f64>(data, drain),
-        _ => {}
+        _ => 0,
     }
 }
 
@@ -492,11 +500,13 @@ impl AudioBackend for CpalBackend {
         let config: StreamConfig = supported.into();
 
         let queue = Arc::new(Ring::new(DEVICE_QUEUE_BLOCKS));
+        let playout = Arc::new(Playout::new(format));
         let gate = Arc::new(Gate::new());
         let (tx, rx): (SyncSender<Started>, Receiver<Started>) = sync_channel(1);
 
         let owner = {
             let queue = Arc::clone(&queue);
+            let playout = Arc::clone(&playout);
             let gate = Arc::clone(&gate);
             thread::Builder::new()
                 .name("edge-ear-cpal-out".to_string())
@@ -505,10 +515,17 @@ impl AudioBackend for CpalBackend {
                     let built = device.build_output_stream_raw(
                         config,
                         sample_format,
-                        move |data, _| {
+                        move |data, info: &cpal::OutputCallbackInfo| {
                             // Silence when there is nothing queued, so a
                             // gap sounds like a gap rather than a click.
-                            fill_from_samples(data, sample_format, &mut drain);
+                            let real = fill_from_samples(data, sample_format, &mut drain);
+                            let stamp = info.timestamp();
+                            let mut ahead = stamp.playback.duration_since(stamp.callback);
+                            // A host that cannot tell reports no gap; one buffer is the least it is.
+                            if ahead.is_zero() {
+                                ahead = guessed_ahead(data.len(), format);
+                            }
+                            playout.took(real, ahead);
                         },
                         // This runs on a device fault rather than per block, so logging is safe.
                         |err| log::error!("speaker stream error: {err}"),
@@ -546,6 +563,7 @@ impl AudioBackend for CpalBackend {
 
         Ok(Box::new(CpalOutput {
             queue,
+            playout,
             format,
             gate,
             owner: Some(owner),

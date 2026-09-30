@@ -4,10 +4,11 @@
 //! and edge-ear's ring queues so neither waits on the other.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tinypipewire::{AudioConfig, Routing, SampleFormat, Stream};
 
+use super::playout::{Playout, guessed_ahead};
 use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
 use crate::backend::device_of;
 use crate::capture::Samples;
@@ -187,7 +188,9 @@ impl Drain {
     }
 
     /// Fills the output byte slice, padding with silence when the queue runs dry.
-    pub(crate) fn fill(&mut self, mut out: &mut [u8]) {
+    /// Returns how many samples were real audio.
+    pub(crate) fn fill(&mut self, mut out: &mut [u8]) -> usize {
+        let mut real_bytes = 0;
         while !out.is_empty() {
             if self.held.is_none() {
                 self.held = self.queue.try_take().map(|taken| (taken.item, 0));
@@ -253,12 +256,41 @@ impl Drain {
                 self.held = None;
             }
 
+            real_bytes += written_bytes;
             out = &mut out[written_bytes..];
         }
 
         // Fill any remaining unwritten space with silence.
         out.fill(0);
+        real_bytes / sample_bytes(self.sample_type)
     }
+}
+
+fn sample_bytes(sample_type: SampleType) -> usize {
+    match sample_type {
+        SampleType::I16 => 2,
+        SampleType::F32 => 4,
+    }
+}
+
+/// How long from now until `pts`, a time on PipeWire's clock. `None` when
+/// the clock cannot be read or the time has already passed.
+fn until(pts: i64) -> Option<Duration> {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime writes only into the timespec it is handed.
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) } != 0 {
+        return None;
+    }
+    let now = Duration::new(
+        u64::try_from(now.tv_sec).ok()?,
+        u32::try_from(now.tv_nsec).ok()?,
+    );
+    Duration::from_nanos(u64::try_from(pts).ok()?)
+        .checked_sub(now)
+        .filter(|ahead| !ahead.is_zero())
 }
 
 /// An open PipeWire input stream.
@@ -301,6 +333,7 @@ impl Drop for TinypipewireInput {
 /// An open PipeWire output stream.
 pub struct TinypipewireOutput {
     queue: Arc<Ring<Samples>>,
+    playout: Arc<Playout>,
     format: AudioFormat,
     stream: Option<Stream>,
 }
@@ -313,6 +346,10 @@ impl OutputStream for TinypipewireOutput {
     fn write(&mut self, samples: &Samples) -> Result<()> {
         self.queue
             .push_before(samples.clone(), Duration::from_millis(100))
+    }
+
+    fn heard_at(&self, position: u64) -> Option<Instant> {
+        self.playout.heard_at(position)
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -410,12 +447,19 @@ impl AudioBackend for TinypipewireBackend {
             AudioConfig::new(format.sample_rate, format.channels as u32).with_format(sample_format);
 
         let queue = Arc::new(Ring::new(DEVICE_QUEUE_BLOCKS));
+        let playout = Arc::new(Playout::new(format));
         let mut drain = Drain::new(Arc::clone(&queue), format.sample_type);
 
+        let heard = Arc::clone(&playout);
         let stream = Stream::playback(move |buf| {
             let avail = buf.available();
-            drain.fill(buf.as_mut_slice());
+            let real = drain.fill(buf.as_mut_slice());
             buf.set_filled(avail);
+            let ahead = buf
+                .pts()
+                .and_then(until)
+                .unwrap_or_else(|| guessed_ahead(avail / sample_bytes(format.sample_type), format));
+            heard.took(real, ahead);
         })
         .map_err(|e| map_tinypipewire_error(Device::Output, e))?;
 
@@ -446,6 +490,7 @@ impl AudioBackend for TinypipewireBackend {
 
         Ok(Box::new(TinypipewireOutput {
             queue,
+            playout,
             format,
             stream: Some(stream),
         }))

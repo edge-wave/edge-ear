@@ -344,6 +344,7 @@ version = "0.6.0"
 dependencies = [
  "cpal",
  "env_logger",
+ "libc",
  "log",
  "ort",
  "rubato",
