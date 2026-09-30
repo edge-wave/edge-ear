@@ -739,4 +739,44 @@ mod tests {
             "in the order they played"
         );
     }
+
+    #[test]
+    fn stopping_a_sound_still_being_heard_cuts_it_without_a_report() {
+        let rig = delayed();
+        rig.player.play(sound("alert", 400), false);
+        assert!(
+            wait_until(|| rig.written() >= 400),
+            "the sound is handed over"
+        );
+
+        assert_eq!(rig.player.stop_sound(), ["alert"], "the cut sound is named");
+        assert!(!rig.player.is_playing(), "and nothing is playing any more");
+        assert!(
+            wait_until(|| rig.log.lock().unwrap_or_else(|e| e.into_inner()).flushes == 1),
+            "what the device still held is dropped"
+        );
+        thread::sleep(DELAY * 2);
+        assert!(
+            rig.finished().is_empty(),
+            "a sound that was cut did not finish"
+        );
+    }
+
+    #[test]
+    fn a_sound_played_after_a_stop_is_reported_as_usual() {
+        let rig = delayed();
+        rig.player.play(sound("first", 400), false);
+        assert!(
+            wait_until(|| rig.written() >= 400),
+            "the first is handed over"
+        );
+        rig.player.stop_sound();
+        rig.player.play(sound("second", 400), false);
+
+        assert!(
+            wait_until(|| !rig.finished().is_empty()),
+            "the second finishes"
+        );
+        assert_eq!(rig.finished(), ["second"]);
+    }
 }
