@@ -867,6 +867,7 @@ pub unsafe extern "C" fn edge_ear_play_sound(
 
 /// @brief Stop whatever is playing.
 ///
+/// The speaker goes quiet at once, including audio the device had queued.
 /// No finished notification follows, because the sound did not reach
 /// its own end.
 ///

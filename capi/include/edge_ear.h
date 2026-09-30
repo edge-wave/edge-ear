@@ -966,6 +966,7 @@ int32_t edge_ear_play_sound(edge_ear_h ear, const char *id, int32_t repeat);
 /**
  * @brief Stop whatever is playing.
  *
+ * The speaker goes quiet at once, including audio the device had queued.
  * No finished notification follows, because the sound did not reach
  * its own end.
  *

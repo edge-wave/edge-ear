@@ -27,6 +27,10 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 
 ### Fixed
 
+- `stop_sound` silences the speaker at once. Audio already queued for
+  the device, about 170 ms on a 48 kHz stereo speaker, used to play on
+  after it. A sound that had been handed over in full but not yet heard
+  is cut too, so no `SoundFinished` follows for it.
 - Python no longer prints a panic when it exits with a handle still
   open. The handle is destroyed during shutdown, and what the library
   logged then tried to reach an interpreter that was already gone; it
