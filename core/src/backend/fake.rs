@@ -38,6 +38,9 @@ pub struct FakeSetup {
     /// How long after the fake speaker takes audio it is heard, the way
     /// a real device's own buffering delays it.
     pub output_delay: Duration,
+    /// What the speaker opens at when left to choose, one per open, the
+    /// last repeating. Empty means mono 16 kHz, as before.
+    pub output_defaults: Vec<AudioFormat>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +69,8 @@ pub struct PlaybackLog {
     /// device shows up nowhere else.
     pub opens: usize,
     pub closes: usize,
+    /// The format each open asked for, `None` when the device chose.
+    pub requested: Vec<Option<AudioFormat>>,
     /// How often the speaker was told to drop what it had not played.
     pub flushes: usize,
 }
@@ -289,11 +294,20 @@ impl AudioBackend for FakeBackend {
         if let Some(failure) = self.setup.output_error {
             return Err(failure.to_error(Device::Output));
         }
-        self.playback
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .opens += 1;
-        let format = req.wanted.unwrap_or(AudioFormat::mono_16k());
+        let opened = {
+            let mut log = self.playback.lock().unwrap_or_else(|e| e.into_inner());
+            log.opens += 1;
+            log.requested.push(req.wanted);
+            log.opens - 1
+        };
+        let chosen = self
+            .setup
+            .output_defaults
+            .get(opened)
+            .or(self.setup.output_defaults.last())
+            .copied()
+            .unwrap_or(AudioFormat::mono_16k());
+        let format = req.wanted.unwrap_or(chosen);
         Ok(Box::new(FakeOutput {
             paced: self.setup.paced,
             due: None,
