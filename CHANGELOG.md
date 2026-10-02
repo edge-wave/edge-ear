@@ -16,20 +16,30 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 
 ### Changed
 
-- `SoundFinished` now arrives once the last sample of a sound has been
-  heard, not when it was handed to the device. The device's own queue
-  and delay used to put it up to about 190 ms early on a 48 kHz stereo
-  speaker, and more on a slower one. `is_playing` stays true until the
-  same moment, and a recording that waits for the wake alert now opens
-  after the alert has actually been heard. cpal and tinypipewire both
-  report how far ahead of the speaker they run; a host that cannot say
-  is taken to be one buffer ahead.
+- `SoundFinished` now arrives once the last audible sample of a sound
+  has been heard, not when it was handed to the device. The silence
+  padded around every sound against clicks is not waited for, so a sound
+  played over that silence does not cut one already heard. The device's
+  own queue and delay used to put it up to about 190 ms early on a
+  48 kHz stereo speaker, and more on a slower one. `is_playing` stays true
+  until the same moment, and a recording that waits for the wake alert
+  now opens after the alert has actually been heard. cpal and
+  tinypipewire both report how far ahead of the speaker they run; a host
+  that cannot say is taken to be one buffer ahead.
 
 ### Fixed
 
+- Playing a sound over another starts it at once. Audio already queued
+  for the device by the sound it replaced, about 180 ms measured, used
+  to play first; now the replaced sound fades out over 15 ms instead. The replaced sound is cut, as by `stop_sound`, so no
+  `SoundFinished` follows for it.
+- A wake alert replaced by another sound no longer leaves the recording
+  behind it unable to end on the quiet. The alert never finished, so
+  silence was never counted and the recording ran to its length cap.
 - `stop_sound` silences the speaker at once. Audio already queued for
   the device, about 170 ms on a 48 kHz stereo speaker, used to play on
-  after it. A sound that had been handed over in full but not yet heard
+  after it; now the sound fades out over 15 ms so the cut does not
+  click. A sound that had been handed over in full but not yet heard
   is cut too, so no `SoundFinished` follows for it.
 - Python no longer prints a panic when it exits with a handle still
   open. The handle is destroyed during shutdown, and what the library

@@ -848,6 +848,9 @@ pub unsafe extern "C" fn edge_ear_unregister_sound(ear: edge_ear_h, id: *const c
 
 /// @brief Play a registered sound.
 ///
+/// Whatever was playing is cut at once, as by edge_ear_stop_sound(), and
+/// no finished notification follows for it.
+///
 /// @param[in] ear the handle
 /// @param[in] id the name it was registered under
 /// @param[in] repeat non-zero loops it until stopped
@@ -867,7 +870,7 @@ pub unsafe extern "C" fn edge_ear_play_sound(
 
 /// @brief Stop whatever is playing.
 ///
-/// The speaker goes quiet at once, including audio the device had queued.
+/// The speaker fades out within 15 ms, including audio the device had queued.
 /// No finished notification follows, because the sound did not reach
 /// its own end.
 ///
@@ -881,7 +884,7 @@ pub unsafe extern "C" fn edge_ear_stop_sound(ear: edge_ear_h) -> i32 {
 
 /// @brief Whether a sound is coming out of the speaker.
 ///
-/// Stays 1 until its last sample has been heard, not merely handed over.
+/// Stays 1 until its last audible sample has been heard, not merely handed over.
 ///
 /// @param[in] ear the handle
 /// @return 1 while playing, 0 when not, #EDGE_EAR_NULL_ARGUMENT for a
