@@ -151,12 +151,13 @@ impl<T> Ring<T> {
         })
     }
 
-    /// Take out everything queued, for a speaker told to go quiet now.
+    /// Rework what is queued under one lock, so a reader never finds it
+    /// half done. For a speaker told to go quiet now.
     #[allow(dead_code, reason = "used by device backends")]
-    pub fn clear(&self) -> Vec<T> {
-        let items = self.lock().items.drain(..).collect();
+    pub fn edit<R>(&self, change: impl FnOnce(&mut VecDeque<T>) -> R) -> R {
+        let result = change(&mut self.lock().items);
         self.space.notify_all();
-        items
+        result
     }
 
     /// Release every waiting reader with `Stopped`. Items already
@@ -269,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn clearing_hands_back_what_was_queued_and_frees_a_waiting_writer() {
+    fn emptying_hands_back_what_was_queued_and_frees_a_waiting_writer() {
         let ring = Arc::new(Ring::new(2));
         ring.push(1);
         ring.push(2);
@@ -278,7 +279,7 @@ mod tests {
             thread::spawn(move || ring.push_before(3, Duration::from_secs(5)))
         };
         thread::sleep(Duration::from_millis(20));
-        let cleared = ring.clear();
+        let cleared: Vec<_> = ring.edit(|items| items.drain(..).collect());
         assert!(cleared.starts_with(&[1, 2]), "cleared {cleared:?}");
         assert!(
             writer.join().expect("the writer").is_ok(),

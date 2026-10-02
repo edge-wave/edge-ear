@@ -1,10 +1,16 @@
 //! When audio handed to a speaker is heard. The device callback says what
 //! it took and how far ahead it runs; the player asks when a sample comes out.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::capture::Samples;
 use crate::config::AudioFormat;
+
+/// How long a sound cut short takes to fall silent. Long enough that the
+/// cut does not click, short enough that it still sounds immediate.
+pub const FADE_OUT: Duration = Duration::from_millis(15);
 
 /// Shared by one output stream's callback, which writes, and the player,
 /// which reads. Positions count interleaved samples from the stream's start.
@@ -61,6 +67,43 @@ impl Playout {
         let frames = samples / u64::from(self.format.channels.max(1));
         Duration::from_secs_f64(frames as f64 / f64::from(self.format.sample_rate.max(1)))
     }
+}
+
+/// Keep only the first [`FADE_OUT`] of queued audio, falling to silence
+/// across it, and drop the rest. Returns how many samples were dropped.
+pub fn fade_out(queue: &mut VecDeque<Samples>, format: AudioFormat) -> u64 {
+    let channels = usize::from(format.channels.max(1));
+    let fade = (FADE_OUT.as_secs_f64() * f64::from(format.sample_rate)) as usize * channels;
+    let queued: usize = queue.iter().map(Samples::len).sum();
+    let keep = queued.min(fade) / channels * channels;
+    let frames = (keep / channels).max(1) as f32;
+
+    let mut kept = 0;
+    let mut faded = VecDeque::new();
+    for mut block in queue.drain(..) {
+        let take = (keep - kept).min(block.len());
+        let gain = |at: usize| 1.0 - ((kept + at) / channels + 1) as f32 / frames;
+        match &mut block {
+            Samples::I16(v) => {
+                v.truncate(take);
+                for (at, s) in v.iter_mut().enumerate() {
+                    *s = (f32::from(*s) * gain(at)) as i16;
+                }
+            }
+            Samples::F32(v) => {
+                v.truncate(take);
+                for (at, s) in v.iter_mut().enumerate() {
+                    *s *= gain(at);
+                }
+            }
+        }
+        kept += take;
+        if !block.is_empty() {
+            faded.push_back(block);
+        }
+    }
+    *queue = faded;
+    (queued - keep) as u64
 }
 
 /// How far ahead of the speaker a callback runs when the device will not

@@ -630,8 +630,17 @@ impl EdgeEar {
             .player
             .as_ref()
             .ok_or(Error::NoDevice(config::Device::Output))?;
-        player.play(sound, repeat);
+        let cut = player.play(sound, repeat);
         log::debug!("playing sound {id:?}, repeat {repeat}");
+        // A replaced alert never finishes, so the recording behind it is let go here.
+        if inner
+            .alert
+            .as_ref()
+            .is_some_and(|alert| cut.contains(alert))
+            && let Some(speech) = inner.speech.as_ref()
+        {
+            alert_ended(speech, &inner.waiting_now);
+        }
         Ok(())
     }
 
