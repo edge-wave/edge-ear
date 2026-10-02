@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::playout::Playout;
+use super::playout::{FADE_OUT, Playout};
 use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
 use crate::capture::Samples;
 use crate::config::{AudioFormat, Device};
@@ -215,6 +215,9 @@ struct FakeOutput {
     log: Arc<Mutex<PlaybackLog>>,
     playout: Playout,
     delay: Duration,
+    /// When what was taken so far will have played out, the way a real
+    /// speaker plays one block after another.
+    heard_until: Option<Instant>,
     /// Set when the speaker should take as long as a real one, on the
     /// same absolute schedule the microphone keeps.
     paced: bool,
@@ -247,7 +250,15 @@ impl OutputStream for FakeOutput {
                 .written
                 .extend(v.iter().map(|s| (s * i16::MAX as f32) as i16)),
         }
-        self.playout.took(samples.len(), self.delay);
+        let now = Instant::now();
+        let start = self
+            .heard_until
+            .map_or(now + self.delay, |until| until.max(now + self.delay));
+        let frames = samples.len() / usize::from(self.format.channels.max(1));
+        self.heard_until = Some(
+            start + Duration::from_secs_f64(frames as f64 / f64::from(self.format.sample_rate)),
+        );
+        self.playout.took(samples.len(), start - now);
         Ok(())
     }
 
@@ -256,8 +267,11 @@ impl OutputStream for FakeOutput {
     }
 
     fn flush(&mut self) -> u64 {
-        // Taken the moment it is written, so there is never anything to drop.
+        // Counted as taken when written, so nothing is returned; past the fade,
+        // what had not played out yet is simply never heard.
         self.log.lock().unwrap_or_else(|e| e.into_inner()).flushes += 1;
+        let soonest = Instant::now() + self.delay + FADE_OUT;
+        self.heard_until = self.heard_until.map(|until| until.min(soonest));
         0
     }
 
@@ -315,6 +329,7 @@ impl AudioBackend for FakeBackend {
             log: Arc::clone(&self.playback),
             playout: Playout::new(format),
             delay: self.setup.output_delay,
+            heard_until: None,
         }))
     }
 

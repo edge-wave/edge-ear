@@ -409,6 +409,63 @@ fn cutting_the_alert_short_still_lets_the_recording_end() {
     );
 }
 
+/// An alert replaced by another sound never finishes either, and must
+/// let the wait behind it go just as a stop does.
+#[test]
+#[ignore]
+fn replacing_the_alert_still_lets_the_recording_end() {
+    let (Some(dir), Some(word)) = (model_dir(), spoken_wake_word()) else {
+        println!("set EDGE_EAR_WAKE_DIR and EDGE_EAR_WAKE_WAV to run this");
+        return;
+    };
+    let ear = heard(word);
+    // Long enough that it is certainly still playing when it is replaced.
+    ear.register_sound(
+        "beep",
+        SoundSource::Pcm {
+            data: Samples::I16(vec![3000; 160_000]),
+            sample_rate: 16_000,
+            channels: 1,
+        },
+        0.4,
+    )
+    .unwrap();
+    ear.register_sound("reply", alert(), 0.4).unwrap();
+    ear.load_wake_features(
+        &dir.join("melspectrogram.onnx"),
+        &dir.join("embedding_model.onnx"),
+    )
+    .unwrap();
+    ear.add_wake_model(Some("hey_jarvis"), &dir.join("hey_jarvis_v0.1.onnx"))
+        .unwrap();
+
+    let seen = watch(&ear);
+    ear.set_no_speech_timeout(Duration::from_millis(300))
+        .unwrap();
+    ear.set_max_recording(Duration::from_secs(20)).unwrap();
+    ear.enable_wake(Some("beep")).unwrap();
+    ear.enable_speech().unwrap();
+    ear.start().unwrap();
+
+    assert!(
+        wait_until(15, || !seen.lock().unwrap().order.is_empty()),
+        "the wake word was never heard"
+    );
+    thread::sleep(Duration::from_millis(200));
+    ear.play_sound("reply", false).unwrap();
+
+    assert!(
+        wait_until(10, || !seen.lock().unwrap().endings.is_empty()),
+        "the recording never ended after the alert was replaced"
+    );
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen.endings[0].0,
+        EndReason::NoSpeech,
+        "it ran to the length cap instead of noticing the quiet"
+    );
+}
+
 /// A setting changed while capture runs must reach whichever path
 /// opens the next recording. Both are asked the same question.
 fn timeout_a_recording_followed(by_wake: bool) -> Option<Duration> {

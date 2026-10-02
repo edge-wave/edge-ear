@@ -148,4 +148,61 @@ mod tests {
         let start = playout.heard_at(0).expect("taken");
         assert_eq!(end - start, Duration::from_millis(100));
     }
+
+    fn blocks(blocks: usize, value: i16) -> VecDeque<Samples> {
+        (0..blocks)
+            .map(|_| Samples::I16(vec![value; 512]))
+            .collect()
+    }
+
+    #[test]
+    fn a_cut_keeps_only_the_fade_and_falls_to_silence() {
+        let mut queue = blocks(3, 10_000);
+        // Fifteen milliseconds at 16 kHz is 240 samples.
+        assert_eq!(fade_out(&mut queue, AudioFormat::mono_16k()), 1_536 - 240);
+
+        let kept: Vec<i16> = queue
+            .iter()
+            .flat_map(|b| b.as_i16().unwrap().to_vec())
+            .collect();
+        assert_eq!(kept.len(), 240);
+        assert!(
+            kept[0] > 9_900,
+            "it starts where the sound was, {}",
+            kept[0]
+        );
+        assert_eq!(*kept.last().unwrap(), 0, "and ends in silence");
+        assert!(kept.windows(2).all(|w| w[1] <= w[0]), "falling all the way");
+    }
+
+    #[test]
+    fn both_channels_of_a_frame_fall_together() {
+        let format = AudioFormat::new(48_000, 2, crate::config::SampleType::F32);
+        let mut queue: VecDeque<Samples> = (0..4).map(|_| Samples::F32(vec![0.5; 512])).collect();
+        fade_out(&mut queue, format);
+
+        let kept: Vec<f32> = queue
+            .iter()
+            .flat_map(|b| b.as_f32().unwrap().to_vec())
+            .collect();
+        assert_eq!(kept.len(), 720 * 2, "fifteen milliseconds of stereo frames");
+        assert!(kept.chunks(2).all(|frame| frame[0] == frame[1]));
+        assert_eq!(kept[kept.len() - 1], 0.0);
+    }
+
+    #[test]
+    fn less_than_a_fade_still_falls_to_silence() {
+        let mut queue: VecDeque<Samples> = [Samples::I16(vec![10_000; 100])].into();
+        assert_eq!(fade_out(&mut queue, AudioFormat::mono_16k()), 0);
+        let kept = queue[0].as_i16().unwrap();
+        assert_eq!(kept.len(), 100);
+        assert_eq!(kept[99], 0);
+    }
+
+    #[test]
+    fn an_empty_queue_has_nothing_to_fade() {
+        let mut queue = VecDeque::new();
+        assert_eq!(fade_out(&mut queue, AudioFormat::mono_16k()), 0);
+        assert!(queue.is_empty());
+    }
 }
