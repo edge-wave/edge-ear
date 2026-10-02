@@ -25,7 +25,7 @@ use std::thread::JoinHandle;
 
 use std::time::Duration;
 
-use backend::{AudioBackend, DeviceInfo, FormatRequest, SupportedFormat};
+use backend::{AudioBackend, DeviceInfo, FormatRequest, OutputStream, SupportedFormat};
 use capture::{CaptureThread, Consumer, ConsumerKind};
 use config::{AudioFormat, Config, Device, Target, TunableConfig};
 use error::{Error, Result};
@@ -692,20 +692,14 @@ impl EdgeEar {
             self.backend_lock().open_output(&request),
         )?;
 
-        // The player needs a way back to the device. The format is
-        // pinned, because sounds are decoded into the first one.
+        // The player needs a way back to the device, asked for the way it
+        // was first opened. Sounds are decoded into the first format.
         let format = stream.format();
         let reopen = {
             let backend = Arc::clone(&self.backend);
-            let request = FormatRequest {
-                device: request.device.clone(),
-                wanted: Some(format),
-            };
             Box::new(move || {
-                backend
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .open_output(&request)
+                let mut backend = backend.lock().unwrap_or_else(|e| e.into_inner());
+                reopen_output(backend.as_mut(), &request, format)
             })
         };
 
@@ -1151,6 +1145,29 @@ fn wake_name(given: Option<&str>, path: &Path) -> Result<String> {
 
 /// Say why something failed on the way up. The caller is told as well,
 /// but the log would otherwise stop at the attempt.
+/// Open the speaker again the way it was first opened, since naming the format made ALSA play
+/// nothing on a WM8960 that was also recording. The format is named only if the device moved.
+fn reopen_output(
+    backend: &mut dyn AudioBackend,
+    first: &FormatRequest,
+    format: AudioFormat,
+) -> Result<Box<dyn OutputStream>> {
+    let mut stream = backend.open_output(first)?;
+    if stream.format() == format || first.wanted.is_some() {
+        return Ok(stream);
+    }
+    log::debug!(
+        "the speaker came back at {:?}, so {:?} is asked for by name",
+        stream.format(),
+        format
+    );
+    let _ = stream.stop();
+    backend.open_output(&FormatRequest {
+        device: first.device.clone(),
+        wanted: Some(format),
+    })
+}
+
 fn note_failure<T>(what: &str, result: Result<T>) -> Result<T> {
     if let Err(e) = &result {
         log::warn!("{what}: {e}");
@@ -1203,6 +1220,66 @@ mod tests {
     use backend::fake::FakeBackend;
     use config::SampleType;
     use std::time::Duration;
+
+    fn speaker_at(defaults: Vec<AudioFormat>) -> FakeBackend {
+        FakeBackend::new(backend::fake::FakeSetup {
+            output_defaults: defaults,
+            ..Default::default()
+        })
+    }
+
+    fn device_chooses() -> FormatRequest {
+        FormatRequest {
+            device: None,
+            wanted: None,
+        }
+    }
+
+    #[test]
+    fn a_speaker_the_device_chose_for_is_reopened_the_same_way() {
+        let stereo = AudioFormat::new(48_000, 2, SampleType::F32);
+        let mut backend = speaker_at(vec![stereo]);
+        let log = Arc::clone(&backend.playback);
+
+        let first = backend.open_output(&device_chooses()).unwrap();
+        let again = reopen_output(&mut backend, &device_chooses(), first.format()).unwrap();
+
+        assert_eq!(again.format(), stereo);
+        let log = log.lock().unwrap();
+        assert_eq!(log.requested, vec![None, None], "the format is never named");
+    }
+
+    #[test]
+    fn a_device_that_moved_is_asked_for_the_first_format_by_name() {
+        let stereo = AudioFormat::new(48_000, 2, SampleType::F32);
+        let moved = AudioFormat::new(44_100, 2, SampleType::F32);
+        let mut backend = speaker_at(vec![stereo, moved]);
+        let log = Arc::clone(&backend.playback);
+
+        let first = backend.open_output(&device_chooses()).unwrap();
+        let again = reopen_output(&mut backend, &device_chooses(), first.format()).unwrap();
+
+        assert_eq!(again.format(), stereo);
+        let log = log.lock().unwrap();
+        assert_eq!(log.requested, vec![None, None, Some(stereo)]);
+        assert_eq!(log.closes, 1, "the stream at the wrong format is let go");
+    }
+
+    #[test]
+    fn a_format_the_application_named_is_named_again() {
+        let mono = AudioFormat::new(24_000, 1, SampleType::I16);
+        let mut backend = speaker_at(Vec::new());
+        let log = Arc::clone(&backend.playback);
+        let named = FormatRequest {
+            device: None,
+            wanted: Some(mono),
+        };
+
+        let first = backend.open_output(&named).unwrap();
+        reopen_output(&mut backend, &named, first.format()).unwrap();
+
+        assert_eq!(log.lock().unwrap().requested, vec![Some(mono), Some(mono)]);
+    }
 
     #[test]
     fn a_word_with_no_name_is_called_after_its_file() {
