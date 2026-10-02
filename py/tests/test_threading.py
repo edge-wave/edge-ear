@@ -65,9 +65,10 @@ def test_a_handler_that_raises_does_not_stop_later_ones():
         ear.on_event(handler)
         ear.register_sound("beep", pcm=[2000] * 1600)
 
+        # Each beep must be heard out before the next, or it is cut, not finished.
         for _ in range(3):
             ear.play_sound("beep")
-            time.sleep(0.25)
+            time.sleep(0.5)
 
         deadline = time.time() + 5
         while len(seen) < 3 and time.time() < deadline:

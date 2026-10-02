@@ -803,4 +803,56 @@ mod tests {
         );
         assert_eq!(rig.finished(), ["second"]);
     }
+
+    #[test]
+    fn a_sound_still_being_fed_is_named_when_replaced() {
+        let rig = delayed();
+        // Repeating, so it is still being fed whenever it is replaced.
+        rig.player.play(sound("idle", 400), true);
+        assert!(wait_until(|| rig.written() >= 800), "the loop is playing");
+
+        assert_eq!(rig.player.play(sound("reply", 400), false), ["idle"]);
+        assert!(
+            wait_until(|| !rig.finished().is_empty()),
+            "the reply finishes"
+        );
+        assert_eq!(
+            rig.finished(),
+            ["reply"],
+            "a replaced loop is never reported"
+        );
+    }
+
+    #[test]
+    fn replacing_nothing_names_nothing_and_drops_nothing() {
+        let rig = delayed();
+        assert!(rig.player.play(sound("alert", 400), false).is_empty());
+        assert!(wait_until(|| !rig.finished().is_empty()), "it finishes");
+        assert_eq!(rig.log.lock().unwrap_or_else(|e| e.into_inner()).flushes, 0);
+    }
+
+    #[test]
+    fn a_sound_finishes_at_its_last_audible_sample_not_its_padding() {
+        let rig = delayed();
+        // A tenth of a second of sound, then a second of silence padding.
+        let mut padded = sound("alert", 1_600 + 16_000);
+        padded.samples[1_600..].fill(0);
+        padded.tail = 16_000;
+
+        rig.player.play(padded, false);
+        assert!(
+            wait_until(|| rig.written() >= 17_600),
+            "the sound is handed over"
+        );
+        let handed = Instant::now();
+        assert!(wait_until(|| !rig.finished().is_empty()), "it finishes");
+        assert!(
+            handed.elapsed() < DELAY + Duration::from_millis(900),
+            "it waited for the padding, {:?} after it was handed over",
+            handed.elapsed()
+        );
+
+        // Already finished, so a sound played now cuts nothing.
+        assert!(rig.player.play(sound("next", 400), false).is_empty());
+    }
 }
