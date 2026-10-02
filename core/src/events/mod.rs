@@ -58,7 +58,7 @@ pub enum Event {
         reason: EndReason,
         duration: Duration,
     },
-    /// A sound reached its own end and its last sample has been heard
+    /// A sound reached its own end and its last audible sample has been heard
     /// from the speaker. One that was stopped is not reported.
     SoundFinished { id: String },
     /// A device, or the work behind it, failed. One that repeats is

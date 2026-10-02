@@ -615,8 +615,8 @@ impl EdgeEar {
         sounds.unregister(id)
     }
 
-    /// Play a registered sound, optionally repeating until stopped.
-    /// A newer sound supersedes whatever was playing.
+    /// Play a registered sound, optionally repeating until stopped. Whatever was
+    /// playing fades out within 15 ms and, being cut, gets no finished event.
     pub fn play_sound(&self, id: &str, repeat: bool) -> Result<()> {
         self.ensure_player()?;
         let inner = self.alive_mut()?;
@@ -644,8 +644,8 @@ impl EdgeEar {
         Ok(())
     }
 
-    /// Cut playback short, including what the device still holds. No
-    /// completion event follows, because the sound did not end on its own.
+    /// Cut playback short, fading out within 15 ms what the device still holds.
+    /// No completion event follows, because the sound did not end on its own.
     pub fn stop_sound(&self) -> Result<()> {
         let inner = self.alive_mut()?;
         let cut = inner
