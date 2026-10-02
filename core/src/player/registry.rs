@@ -46,6 +46,9 @@ pub struct RegisteredSound {
     #[allow(dead_code, reason = "records what conversion produced")]
     pub format: AudioFormat,
     pub volume: f32,
+    /// Samples of silence after the last one heard. The sound has finished
+    /// once that last one is heard; the padding is only there against clicks.
+    pub tail: usize,
 }
 
 impl RegisteredSound {
@@ -107,6 +110,7 @@ impl Registry {
                 samples: shaped,
                 format: output,
                 volume,
+                tail: envelope::padding(output.sample_rate, output.channels).len(),
             },
         );
         Ok(())

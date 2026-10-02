@@ -40,7 +40,7 @@ struct Playing {
 /// A sound handed over in full, not yet heard to its end.
 struct Finishing {
     id: String,
-    /// Where its last sample sits in what the stream was given.
+    /// Where its last audible sample sits in what the stream was given.
     end: u64,
 }
 
@@ -50,7 +50,7 @@ struct State {
     /// Raised by the application, so a natural end can be told apart
     /// from being cut short. Only a natural end is reported.
     stopped_by_application: bool,
-    /// Reported one by one as the speaker plays their last sample.
+    /// Reported one by one as the speaker plays their last audible sample.
     finishing: VecDeque<Finishing>,
     /// Set by a stop, so the worker drops what the device still holds.
     flush: bool,
@@ -202,7 +202,7 @@ impl Player {
         cut
     }
 
-    /// True until the last sample of the last sound has been heard.
+    /// True until the last audible sample of the last sound has been heard.
     pub fn is_playing(&self) -> bool {
         let state = self.lock();
         state.current.is_some() || !state.finishing.is_empty()
@@ -272,10 +272,12 @@ impl Shared {
                         playing.position = 0;
                     } else {
                         let id = playing.sound.id.clone();
+                        let end = (written.unwrap_or(0) + block.len() as u64)
+                            .saturating_sub(playing.sound.tail as u64);
                         // Queued in the same breath, so the sound never looks finished early.
                         guard.finishing.push_back(Finishing {
                             id: id.clone(),
-                            end: written.unwrap_or(0) + block.len() as u64,
+                            end,
                         });
                         ended = Some(id);
                         guard.current = None;
@@ -435,7 +437,7 @@ fn run(mut speaker: Speaker, shared: Arc<Shared>, dispatcher: Arc<Dispatcher>, h
     speaker.release();
 }
 
-/// Report each sound whose last sample has now been heard, and say when
+/// Report each sound whose last audible sample has now been heard, and say when
 /// to look again. Only a sound that ran to its own end gets here.
 fn report_heard(
     speaker: &Speaker,
@@ -492,6 +494,7 @@ mod tests {
             samples: vec![1_000; samples],
             format: AudioFormat::mono_16k(),
             volume: 1.0,
+            tail: 0,
         }
     }
 
