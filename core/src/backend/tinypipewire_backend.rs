@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use tinypipewire::{AudioConfig, Routing, SampleFormat, Stream};
 
-use super::playout::{Playout, guessed_ahead};
+use super::playout::{Playout, fade_out, guessed_ahead};
 use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
 use crate::backend::device_of;
 use crate::capture::Samples;
@@ -353,11 +353,8 @@ impl OutputStream for TinypipewireOutput {
     }
 
     fn flush(&mut self) -> u64 {
-        self.queue
-            .clear()
-            .iter()
-            .map(|block| block.len() as u64)
-            .sum()
+        let format = self.format;
+        self.queue.edit(|queued| fade_out(queued, format))
     }
 
     fn stop(&mut self) -> Result<()> {

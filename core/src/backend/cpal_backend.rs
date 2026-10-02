@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample, StreamConfig, SupportedStreamConfig};
 
-use super::playout::{Playout, guessed_ahead};
+use super::playout::{Playout, fade_out, guessed_ahead};
 use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
 use crate::capture::Samples;
 use crate::capture::ring::{LossReport, Ring};
@@ -263,11 +263,8 @@ impl OutputStream for CpalOutput {
     }
 
     fn flush(&mut self) -> u64 {
-        self.queue
-            .clear()
-            .iter()
-            .map(|block| block.len() as u64)
-            .sum()
+        let format = self.format;
+        self.queue.edit(|queued| fade_out(queued, format))
     }
 
     fn stop(&mut self) -> Result<()> {

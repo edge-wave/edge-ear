@@ -56,6 +56,18 @@ struct State {
     flush: bool,
 }
 
+impl State {
+    /// Drop every sound not yet heard to its end, and have the worker drop
+    /// what the device still holds of them. No finished event follows.
+    fn cut(&mut self) -> Vec<String> {
+        let mut cut: Vec<String> = self.finishing.drain(..).map(|f| f.id).collect();
+        cut.extend(self.current.take().map(|p| p.sound.id));
+        // With nothing cut, the device holds nothing of ours to drop.
+        self.flush |= !cut.is_empty();
+        cut
+    }
+}
+
 /// What the player and its worker both hold.
 struct Shared {
     state: Mutex<State>,
@@ -163,9 +175,11 @@ impl Player {
         self.format
     }
 
-    /// Start a sound, replacing whatever was playing.
-    pub fn play(&self, sound: RegisteredSound, repeat: bool) {
+    /// Start a sound, replacing whatever was playing, and name every sound
+    /// it cut. What the device still held of them is dropped, as on a stop.
+    pub fn play(&self, sound: RegisteredSound, repeat: bool) -> Vec<String> {
         let mut state = self.lock();
+        let cut = state.cut();
         state.current = Some(Playing {
             sound,
             position: 0,
@@ -174,16 +188,15 @@ impl Player {
         state.stopped_by_application = false;
         drop(state);
         self.shared.wake.notify_all();
+        cut
     }
 
     /// Cut playback short, naming every sound cut, including any still
     /// being heard. No completion event follows for them.
     pub fn stop_sound(&self) -> Vec<String> {
         let mut state = self.lock();
-        let mut cut: Vec<String> = state.finishing.drain(..).map(|f| f.id).collect();
-        cut.extend(state.current.take().map(|p| p.sound.id));
+        let cut = state.cut();
         state.stopped_by_application = true;
-        state.flush = true;
         drop(state);
         self.shared.wake.notify_all();
         cut
@@ -723,20 +736,28 @@ mod tests {
     }
 
     #[test]
-    fn a_sound_played_over_one_still_being_heard_leaves_both_reported() {
+    fn a_sound_played_over_one_still_being_heard_cuts_it() {
         let rig = delayed();
         rig.player.play(sound("first", 400), false);
         assert!(
             wait_until(|| rig.written() >= 400),
             "the first is handed over"
         );
-        rig.player.play(sound("second", 400), false);
-
-        assert!(wait_until(|| rig.finished().len() == 2), "both finish");
         assert_eq!(
-            rig.finished(),
-            ["first", "second"],
-            "in the order they played"
+            rig.player.play(sound("second", 400), false),
+            ["first"],
+            "the sound replaced is named"
+        );
+
+        assert!(
+            wait_until(|| !rig.finished().is_empty()),
+            "the second finishes"
+        );
+        assert_eq!(rig.finished(), ["second"], "and only the second");
+        assert_eq!(
+            rig.log.lock().unwrap_or_else(|e| e.into_inner()).flushes,
+            1,
+            "what the device held of the first was dropped"
         );
     }
 
