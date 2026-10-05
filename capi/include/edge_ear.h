@@ -991,6 +991,33 @@ int32_t edge_ear_stop_sound(edge_ear_h ear);
 int32_t edge_ear_is_playing(edge_ear_h ear);
 
 /**
+ * @brief Take what the speaker plays out of the microphone, with
+ *        WebRTC's echo canceller.
+ *
+ * Off by default. Every consumer gets the cleaned microphone from the
+ * next start, so this is set before capture starts. Only a library
+ * built with the `webrtc-aec` feature has the canceller.
+ *
+ * @param[in] ear the handle
+ * @param[in] on non-zero to cancel echo
+ * @return #EDGE_EAR_OK, #EDGE_EAR_RUNNING_NOT_ALLOWED while capturing,
+ *         #EDGE_EAR_INVALID_VALUE when turned on in a build without
+ *         the canceller, or another negative #edge_ear_error.
+ * @see edge_ear_is_echo_cancellation_enabled
+ */
+int32_t edge_ear_set_echo_cancellation(edge_ear_h ear, int32_t on);
+
+/**
+ * @brief Whether echo is taken out of the microphone.
+ *
+ * @param[in] ear the handle
+ * @return 1 when on, 0 when off, #EDGE_EAR_NULL_ARGUMENT for a null
+ *         handle.
+ * @see edge_ear_set_echo_cancellation
+ */
+int32_t edge_ear_is_echo_cancellation_enabled(edge_ear_h ear);
+
+/**
  * @brief Open the microphone at this rather than at its default.
  *
  * Refused here if the named device does not offer it, and again when
