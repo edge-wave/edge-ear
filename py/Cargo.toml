@@ -20,6 +20,7 @@ default = ["cpal-backend"]
 # cpal is off.
 cpal-backend = ["edge-ear-core/cpal-backend"]
 pipewire-flow-backend = ["edge-ear-core/pipewire-flow-backend"]
+webrtc-aec = ["edge-ear-core/webrtc-aec"]
 
 [dependencies]
 edge-ear-core.workspace = true

@@ -98,6 +98,12 @@ def test_waiting_for_the_alert_is_off_until_it_is_asked_for():
         ear.set_wake_recording_waits_for_alert(False)
 
 
+def test_echo_cancellation_is_off_until_it_is_asked_for():
+    with edge_ear.EdgeEar() as ear:
+        assert not ear.is_echo_cancellation_enabled
+        ear.set_echo_cancellation(False)
+
+
 def test_a_device_says_what_it_will_take():
     with edge_ear.EdgeEar() as ear:
         for formats in (ear.input_device_formats(), ear.output_device_formats()):
