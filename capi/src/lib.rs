@@ -894,6 +894,37 @@ pub unsafe extern "C" fn edge_ear_is_playing(ear: edge_ear_h) -> i32 {
     with!(ear, e => i32::from(e.core.is_playing()))
 }
 
+// ---- echo cancellation -------------------------------------------
+
+/// @brief Take what the speaker plays out of the microphone, with
+///        WebRTC's echo canceller.
+///
+/// Off by default. Every consumer gets the cleaned microphone from the
+/// next start, so this is set before capture starts. Only a library
+/// built with the `webrtc-aec` feature has the canceller.
+///
+/// @param[in] ear the handle
+/// @param[in] on non-zero to cancel echo
+/// @return #EDGE_EAR_OK, #EDGE_EAR_RUNNING_NOT_ALLOWED while capturing,
+///         #EDGE_EAR_INVALID_VALUE when turned on in a build without
+///         the canceller, or another negative #edge_ear_error.
+/// @see edge_ear_is_echo_cancellation_enabled
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_set_echo_cancellation(ear: edge_ear_h, on: i32) -> i32 {
+    with!(ear, e => report(e.core.set_echo_cancellation(on != 0)))
+}
+
+/// @brief Whether echo is taken out of the microphone.
+///
+/// @param[in] ear the handle
+/// @return 1 when on, 0 when off, #EDGE_EAR_NULL_ARGUMENT for a null
+///         handle.
+/// @see edge_ear_set_echo_cancellation
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_is_echo_cancellation_enabled(ear: edge_ear_h) -> i32 {
+    with!(ear, e => i32::from(e.core.is_echo_cancellation_enabled()))
+}
+
 // ---- devices -----------------------------------------------------
 
 /// One device. Both strings are borrowed until the next listing call

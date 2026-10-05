@@ -95,6 +95,8 @@ int main(void)
           "waiting for the alert");
     CHECK(edge_ear_set_wake_recording_waits_for_alert(ear, 0) == EDGE_EAR_OK,
           "not waiting for the alert");
+    CHECK(edge_ear_set_echo_cancellation(ear, 0) == EDGE_EAR_OK, "echo cancellation off");
+    CHECK(edge_ear_is_echo_cancellation_enabled(ear) == 0, "no echo cancellation");
     CHECK(edge_ear_set_ring_capacity(ear, 2.0) == EDGE_EAR_OK, "ring capacity");
     CHECK(edge_ear_set_format(ear, EDGE_EAR_TARGET_READ, 16000, 1,
                               EDGE_EAR_SAMPLE_TYPE_I16) == EDGE_EAR_OK, "read format");
