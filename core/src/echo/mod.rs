@@ -291,4 +291,71 @@ mod tests {
         );
         assert_eq!(reference.played.len(), 0);
     }
+
+    /// What is left of a speaker heard 30 ms late at half its level, from the third second on.
+    /// Blocks go in turn rather than in real time, so the answer is the same on any machine.
+    #[cfg(feature = "webrtc-aec")]
+    fn echo_left(referenced: bool, speaker: AudioFormat, microphone: AudioFormat) -> f64 {
+        let canceller: Box<dyn EchoCanceller> =
+            Box::new(super::webrtc::WebrtcCanceller::new(16_000).unwrap());
+        let reference = Arc::new(EchoReference::new());
+        let mut stage = EchoStage::new(
+            Arc::new(Mutex::new(canceller)),
+            Arc::clone(&reference),
+            microphone,
+        )
+        .unwrap();
+
+        let rate = microphone.sample_rate as usize;
+        let (block, delay) = (rate / 100, rate * 3 / 100);
+        let mut seed = 3u32;
+        let played: Vec<i16> = (0..rate * 4)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (seed >> 16) as i16 / 2
+            })
+            .collect();
+
+        let (mut energy, mut seen) = (0.0, 0);
+        for (n, frames) in played.chunks_exact(block).enumerate() {
+            if referenced {
+                let channels = usize::from(speaker.channels);
+                let spoken = frames
+                    .iter()
+                    .flat_map(|s| std::iter::repeat_n(*s, channels))
+                    .collect();
+                reference.push(Samples::I16(spoken), speaker, Instant::now());
+            }
+            let heard = (n * block..(n + 1) * block)
+                .map(|i| i.checked_sub(delay).map_or(0, |j| played[j] / 2))
+                .collect();
+            let Samples::F32(cleaned) = stage.process(&Samples::I16(heard)).unwrap() else {
+                unreachable!("the stage hands back f32");
+            };
+            for sample in cleaned {
+                if seen >= 32_000 {
+                    energy += f64::from(sample).powi(2);
+                }
+                seen += 1;
+            }
+        }
+        energy
+    }
+
+    #[cfg(feature = "webrtc-aec")]
+    #[test]
+    fn webrtc_takes_the_echo_out_through_the_stage_and_its_resampling() {
+        let stereo_48k = AudioFormat::new(48_000, 2, SampleType::I16);
+        let mono_48k = AudioFormat::new(48_000, 1, SampleType::I16);
+        let mono_16k = AudioFormat::mono_16k();
+        for (speaker, microphone) in [(mono_16k, mono_16k), (stereo_48k, mono_48k)] {
+            let left_in = echo_left(false, speaker, microphone);
+            let taken_out = echo_left(true, speaker, microphone);
+            let reduction_db = 10.0 * (left_in / taken_out.max(1e-12)).log10();
+            assert!(
+                reduction_db > 10.0,
+                "{speaker:?}: only {reduction_db:.1} dB of the echo was taken out"
+            );
+        }
+    }
 }
