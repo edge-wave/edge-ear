@@ -11,6 +11,9 @@ use crate::config::{AudioFormat, Device};
 use crate::echo::EchoReference;
 use crate::error::{Error, Result};
 
+/// How late a writer may be before a speaker heard back by the room runs dry.
+const ROOM_BUFFER: Duration = Duration::from_millis(100);
+
 /// What the fake microphone will produce, and how it should fail.
 #[derive(Debug, Clone, Default)]
 pub struct FakeSetup {
@@ -104,24 +107,6 @@ impl Room {
             }
         }
         0.0
-    }
-
-    /// Play a block from `start`, right after the last if it follows within a few milliseconds,
-    /// because a real speaker plays one sample after another whatever its thread's timing.
-    fn play(&mut self, start: Instant, rate: u32, samples: Vec<f32>) {
-        let start = match self.heard.last() {
-            Some((last, last_rate, last_samples)) => {
-                let end = *last
-                    + Duration::from_secs_f64(last_samples.len() as f64 / f64::from(*last_rate));
-                if start >= end && start - end < Duration::from_millis(5) {
-                    end
-                } else {
-                    start
-                }
-            }
-            None => start,
-        };
-        self.heard.push((start, rate, samples));
     }
 
     /// Forget what was heard before `before`, which no microphone block can reach any more.
@@ -303,13 +288,18 @@ impl OutputStream for FakeOutput {
             let span = Duration::from_secs_f64(frames as f64 / self.format.sample_rate as f64);
             let now = Instant::now();
             let due = self.due.get_or_insert(now);
-            // Idle between sounds, or late. Either way a real speaker
-            // has run dry, so begin again rather than catching up.
-            if *due < now {
+            // Idle or late, a real speaker has run dry and begins again rather than catching up.
+            // One heard back by the room has a buffer, so it keeps its schedule through a small delay.
+            let slack = if self.room.is_some() {
+                ROOM_BUFFER
+            } else {
+                Duration::ZERO
+            };
+            if *due + slack < now {
                 *due = now;
             }
             *due += span;
-            std::thread::sleep(*due - now);
+            std::thread::sleep(due.saturating_duration_since(now));
         }
         let mut log = self.log.lock().unwrap_or_else(|e| e.into_inner());
         match samples {
@@ -319,15 +309,20 @@ impl OutputStream for FakeOutput {
                 .extend(v.iter().map(|s| (s * i16::MAX as f32) as i16)),
         }
         let now = Instant::now();
-        let start = self
-            .heard_until
-            .map_or(now + self.delay, |until| until.max(now + self.delay));
+        // A speaker heard back by the room plays sample after sample while its writer keeps up
+        // within a buffer's worth, as a real one does, so the echo never jumps.
+        let start = match self.heard_until {
+            Some(until) if self.room.is_some() && until + ROOM_BUFFER >= now + self.delay => until,
+            Some(until) => until.max(now + self.delay),
+            None => now + self.delay,
+        };
         let frames = samples.len() / usize::from(self.format.channels.max(1));
         self.heard_until = Some(
             start + Duration::from_secs_f64(frames as f64 / f64::from(self.format.sample_rate)),
         );
-        self.playout.took(samples.len(), start - now);
-        self.playout.played(start - now, || samples.clone());
+        let ahead = start.saturating_duration_since(now);
+        self.playout.took(samples.len(), ahead);
+        self.playout.played(ahead, || samples.clone());
         if let Some(room) = &self.room {
             let channels = usize::from(self.format.channels.max(1));
             let mono = match samples {
@@ -339,7 +334,7 @@ impl OutputStream for FakeOutput {
                 Samples::F32(v) => v.iter().step_by(channels).copied().collect(),
             };
             let mut room = room.lock().unwrap_or_else(|e| e.into_inner());
-            room.play(start, self.format.sample_rate, mono);
+            room.heard.push((start, self.format.sample_rate, mono));
         }
         Ok(())
     }
