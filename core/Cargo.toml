@@ -36,6 +36,10 @@ webrtc-audio-processing = { workspace = true, optional = true }
 [dev-dependencies]
 env_logger.workspace = true
 
+[[example]]
+name = "echo_check"
+required-features = ["webrtc-aec"]
+
 [target.'cfg(target_os = "linux")'.dependencies]
 tinypipewire = { workspace = true, optional = true }
 # PipeWire times playback on CLOCK_MONOTONIC, which std cannot read out.
