@@ -768,6 +768,17 @@ impl EdgeEar {
             .collect())
     }
 
+    /// Take what the speaker plays out of the microphone with WebRTC's canceller, from the next
+    /// start. Only a build with the webrtc-aec feature has it.
+    fn set_echo_cancellation(&self, on: bool) -> PyResult<()> {
+        self.core.set_echo_cancellation(on).map_err(to_py)
+    }
+
+    #[getter]
+    fn is_echo_cancellation_enabled(&self) -> bool {
+        self.core.is_echo_cancellation_enabled()
+    }
+
     #[pyo3(signature = (id = None))]
     fn set_input_device(&self, id: Option<&str>) -> PyResult<()> {
         self.core.set_input_device(id).map_err(to_py)
