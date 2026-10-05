@@ -215,12 +215,14 @@ fn assert_echo_taken_out(microphone: AudioFormat, speaker: AudioFormat) {
 
 #[cfg(feature = "webrtc-aec")]
 #[test]
+#[ignore = "runs in real time, which shared CI runners cannot keep"]
 fn webrtc_takes_the_room_echo_out_of_what_is_read() {
     assert_echo_taken_out(AudioFormat::mono_16k(), AudioFormat::mono_16k());
 }
 
 #[cfg(feature = "webrtc-aec")]
 #[test]
+#[ignore = "runs in real time, which shared CI runners cannot keep"]
 fn webrtc_does_so_across_resampling_on_both_sides() {
     use edge_ear_core::config::SampleType;
     let microphone = AudioFormat::new(48_000, 1, SampleType::I16);
