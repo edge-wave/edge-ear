@@ -14,6 +14,7 @@ use crate::backend::device_of;
 use crate::capture::Samples;
 use crate::capture::ring::{LossReport, Ring};
 use crate::config::{AudioFormat, Device, SampleType};
+use crate::echo::EchoReference;
 use crate::error::{Error, Result};
 
 /// Blocks the device queue holds before the oldest goes. The capture
@@ -357,6 +358,11 @@ impl OutputStream for TinypipewireOutput {
         self.queue.edit(|queued| fade_out(queued, format))
     }
 
+    fn tap(&mut self, reference: Arc<EchoReference>) -> bool {
+        self.playout.set_tap(reference);
+        true
+    }
+
     fn stop(&mut self) -> Result<()> {
         if let Some(stream) = self.stream.take() {
             if let Err(e) = stream.stop(true) {
@@ -465,6 +471,9 @@ impl AudioBackend for TinypipewireBackend {
                 .and_then(until)
                 .unwrap_or_else(|| guessed_ahead(avail / sample_bytes(format.sample_type), format));
             heard.took(real, ahead);
+            heard.played(ahead, || {
+                bytes_to_samples(buf.as_mut_slice(), format.sample_type)
+            });
         })
         .map_err(|e| map_tinypipewire_error(Device::Output, e))?;
 

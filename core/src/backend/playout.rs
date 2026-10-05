@@ -3,10 +3,12 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::capture::Samples;
 use crate::config::AudioFormat;
+use crate::echo::EchoReference;
 
 /// How long a sound cut short takes to fall silent. Long enough that the
 /// cut does not click, short enough that it still sounds immediate.
@@ -21,6 +23,8 @@ pub struct Playout {
     taken: AtomicU64,
     /// When the last of them is heard, in nanoseconds after `epoch`.
     heard_ns: AtomicU64,
+    /// Where a copy of everything the device takes goes, while echo is being cancelled.
+    tap: Mutex<Option<Arc<EchoReference>>>,
 }
 
 impl Playout {
@@ -30,6 +34,21 @@ impl Playout {
             format,
             taken: AtomicU64::new(0),
             heard_ns: AtomicU64::new(0),
+            tap: Mutex::new(None),
+        }
+    }
+
+    /// Copy what the device takes into `reference` from the next callback on.
+    pub fn set_tap(&self, reference: Arc<EchoReference>) {
+        *self.tap.lock().unwrap_or_else(|e| e.into_inner()) = Some(reference);
+    }
+
+    /// Called by the device callback with the whole buffer it filled, silence included, whose
+    /// first sample is heard `ahead` from now. `block` is only built while someone wants it.
+    pub fn played(&self, ahead: Duration, block: impl FnOnce() -> Samples) {
+        let tap = self.tap.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(reference) = tap.as_ref().filter(|r| r.is_wanted()) {
+            reference.push(block(), self.format, Instant::now() + ahead);
         }
     }
 

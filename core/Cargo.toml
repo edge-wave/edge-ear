@@ -18,6 +18,9 @@ default = ["cpal-backend"]
 # over without dragging ALSA or CoreAudio in.
 cpal-backend = ["dep:cpal"]
 tinypipewire-backend = ["dep:tinypipewire", "dep:libc"]
+# WebRTC's echo canceller, built from source. Off by default, because
+# that build needs meson, ninja and a C++ compiler.
+webrtc-aec = ["dep:webrtc-audio-processing"]
 
 [dependencies]
 cpal = { workspace = true, optional = true }
@@ -26,6 +29,7 @@ rubato.workspace = true
 symphonia.workspace = true
 thiserror.workspace = true
 ort.workspace = true
+webrtc-audio-processing = { workspace = true, optional = true }
 
 # PipeWire only exists on Linux, so --all-features elsewhere must not try
 # to build the bindings.
