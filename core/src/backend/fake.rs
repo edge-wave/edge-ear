@@ -8,6 +8,7 @@ use super::playout::{FADE_OUT, Playout};
 use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
 use crate::capture::Samples;
 use crate::config::{AudioFormat, Device};
+use crate::echo::EchoReference;
 use crate::error::{Error, Result};
 
 /// What the fake microphone will produce, and how it should fail.
@@ -41,6 +42,8 @@ pub struct FakeSetup {
     /// What the speaker opens at when left to choose, one per open, the
     /// last repeating. Empty means mono 16 kHz, as before.
     pub output_defaults: Vec<AudioFormat>,
+    /// The speaker heard back by a paced microphone at this gain, as in a real room.
+    pub echo_gain: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +81,55 @@ pub struct PlaybackLog {
 pub struct FakeBackend {
     setup: FakeSetup,
     pub playback: Arc<Mutex<PlaybackLog>>,
+    room: Arc<Mutex<Room>>,
+}
+
+/// What the speaker has played and when, for the microphone to hear back.
+#[derive(Default)]
+struct Room {
+    /// When each block starts to be heard, at what rate, as one channel.
+    heard: Vec<(Instant, u32, Vec<f32>)>,
+}
+
+impl Room {
+    /// The speaker at `at`, or silence if it was not playing then.
+    fn at(&self, at: Instant) -> f32 {
+        for (start, rate, samples) in &self.heard {
+            let Some(offset) = at.checked_duration_since(*start) else {
+                continue;
+            };
+            let index = (offset.as_secs_f64() * f64::from(*rate)) as usize;
+            if let Some(sample) = samples.get(index) {
+                return *sample;
+            }
+        }
+        0.0
+    }
+
+    /// Play a block from `start`, right after the last if it follows within a few milliseconds,
+    /// because a real speaker plays one sample after another whatever its thread's timing.
+    fn play(&mut self, start: Instant, rate: u32, samples: Vec<f32>) {
+        let start = match self.heard.last() {
+            Some((last, last_rate, last_samples)) => {
+                let end = *last
+                    + Duration::from_secs_f64(last_samples.len() as f64 / f64::from(*last_rate));
+                if start >= end && start - end < Duration::from_millis(5) {
+                    end
+                } else {
+                    start
+                }
+            }
+            None => start,
+        };
+        self.heard.push((start, rate, samples));
+    }
+
+    /// Forget what was heard before `before`, which no microphone block can reach any more.
+    fn forget(&mut self, before: Instant) {
+        self.heard.retain(|(start, rate, samples)| {
+            *start + Duration::from_secs_f64(samples.len() as f64 / f64::from(*rate)) >= before
+        });
+    }
 }
 
 impl FakeBackend {
@@ -85,6 +137,7 @@ impl FakeBackend {
         Self {
             setup,
             playback: Arc::new(Mutex::new(PlaybackLog::default())),
+            room: Arc::new(Mutex::new(Room::default())),
         }
     }
 
@@ -164,6 +217,8 @@ struct FakeInput {
     /// When the next block is due. Absolute, so a late block does not
     /// push every block after it later still.
     due: Option<Instant>,
+    /// The room and how loud the speaker is heard in it, when it is.
+    echo: Option<(Arc<Mutex<Room>>, f32)>,
 }
 
 impl InputStream for FakeInput {
@@ -200,6 +255,18 @@ impl InputStream for FakeInput {
                 // Further behind than any reader keeps history for.
                 *due = now;
             }
+            if let Some((room, gain)) = &self.echo {
+                let start = *due - pace;
+                let mut room = room.lock().unwrap_or_else(|e| e.into_inner());
+                room.forget(start);
+                let channels = usize::from(self.format.channels.max(1));
+                let rate = f64::from(self.format.sample_rate);
+                for (n, sample) in block.iter_mut().enumerate() {
+                    let at = start + Duration::from_secs_f64((n / channels) as f64 / rate);
+                    let heard = f32::from(*sample) + room.at(at) * gain * 32_767.0;
+                    *sample = heard.clamp(-32_768.0, 32_767.0) as i16;
+                }
+            }
         }
         Ok(Samples::I16(block))
     }
@@ -222,6 +289,7 @@ struct FakeOutput {
     /// same absolute schedule the microphone keeps.
     paced: bool,
     due: Option<Instant>,
+    room: Option<Arc<Mutex<Room>>>,
 }
 
 impl OutputStream for FakeOutput {
@@ -259,6 +327,20 @@ impl OutputStream for FakeOutput {
             start + Duration::from_secs_f64(frames as f64 / f64::from(self.format.sample_rate)),
         );
         self.playout.took(samples.len(), start - now);
+        self.playout.played(start - now, || samples.clone());
+        if let Some(room) = &self.room {
+            let channels = usize::from(self.format.channels.max(1));
+            let mono = match samples {
+                Samples::I16(v) => v
+                    .iter()
+                    .step_by(channels)
+                    .map(|s| f32::from(*s) / 32_768.0)
+                    .collect(),
+                Samples::F32(v) => v.iter().step_by(channels).copied().collect(),
+            };
+            let mut room = room.lock().unwrap_or_else(|e| e.into_inner());
+            room.play(start, self.format.sample_rate, mono);
+        }
         Ok(())
     }
 
@@ -273,6 +355,11 @@ impl OutputStream for FakeOutput {
         let soonest = Instant::now() + self.delay + FADE_OUT;
         self.heard_until = self.heard_until.map(|until| until.min(soonest));
         0
+    }
+
+    fn tap(&mut self, reference: Arc<EchoReference>) -> bool {
+        self.playout.set_tap(reference);
+        true
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -296,6 +383,10 @@ impl AudioBackend for FakeBackend {
             stopped: false,
             starve: self.setup.starve,
             due: None,
+            echo: self
+                .setup
+                .echo_gain
+                .map(|gain| (Arc::clone(&self.room), gain)),
             pace: self.setup.paced.then(|| {
                 let format = self.setup.input_format.unwrap_or(AudioFormat::mono_16k());
                 let frames = self.setup.block_samples.max(1) / format.channels.max(1) as usize;
@@ -330,6 +421,7 @@ impl AudioBackend for FakeBackend {
             playout: Playout::new(format),
             delay: self.setup.output_delay,
             heard_until: None,
+            room: self.setup.echo_gain.map(|_| Arc::clone(&self.room)),
         }))
     }
 
