@@ -9,6 +9,21 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 
 ### Added
 
+- Echo cancellation. `set_echo_cancellation` takes what the speaker
+  plays out of the microphone with WebRTC's AEC3 before any consumer
+  sees it, built in by the new `webrtc-aec` feature in core, capi and
+  py; without the feature, turning it on is refused. The canceller is
+  swappable: `set_echo_canceller` takes anything that implements
+  `echo::EchoCanceller`. The C API adds
+  `edge_ear_set_echo_cancellation` and
+  `edge_ear_is_echo_cancellation_enabled`, and Python the matching
+  method and property.
+- `OutputStream::tap` copies everything a speaker plays, silence
+  included, for the echo canceller. It has a default that declines, so
+  a backend written outside this library still builds and leaves its
+  echo in. cpal, tinypipewire and the fake backend all tap.
+- `FakeSetup::echo_gain` lets the fake microphone hear the fake speaker
+  back, so echo cancellation can be tested without hardware.
 - `OutputStream::heard_at` says when a sample handed to a speaker comes
   out of it, and `backend::playout::Playout` keeps that account for a
   device callback. The method has a default, so a backend written

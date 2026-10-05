@@ -93,6 +93,36 @@ cargo build -p edge-ear-core --no-default-features \
   --features tinypipewire-backend
 ```
 
+## Echo cancellation
+
+The microphone also hears what the library plays. With echo
+cancellation on, each speaker callback copies what it played, silence
+included, and the capture thread takes it back out before the wake word
+detector, the speech detector or `read` see the audio.
+
+WebRTC's canceller (AEC3) comes with the `webrtc-aec` feature. It is
+compiled from source, which needs meson, ninja and a C++ compiler, and
+the first build fetches abseil-cpp:
+
+```bash
+brew install meson ninja                          # macOS
+sudo apt install meson ninja-build libclang-dev   # Linux
+cargo build -p edge-ear-core --features webrtc-aec
+```
+
+```rust
+ear.set_echo_cancellation(true)?; // before start
+ear.start()?;
+```
+
+The canceller is swappable. Anything that implements `EchoCanceller` can
+take its place through `set_echo_canceller`: it is handed one channel of
+f32 in 10 ms frames, each speaker frame before the microphone frames that
+can hold its echo, and finds the delay between them itself.
+
+Only what this library plays is taken out. Sound from another program
+reaches the speaker without passing through here, so its echo stays.
+
 ## Building
 
 ```bash
@@ -131,6 +161,9 @@ cd py && maturin develop
 # or against PipeWire
 cd py && maturin develop \
   --no-default-features --features tinypipewire-backend
+
+# with WebRTC's echo canceller
+cd py && maturin develop --features webrtc-aec
 ```
 
 ```python

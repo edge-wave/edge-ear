@@ -89,6 +89,24 @@ files. That source is at https://github.com/pdeljanov/Symphonia. The
 licence covers those files alone; it places no condition on the rest of
 this project.
 
-Nothing here reaches a network, at build time or after. The only
-exception is building `ort`, which fetches the ONNX Runtime binaries it
-links against.
+## Code compiled in only with the webrtc-aec feature
+
+| Code                      | Licence            | What it does          |
+|---------------------------|--------------------|-----------------------|
+| WebRTC audio processing   | BSD-3-Clause       | Cancelling echo       |
+| abseil-cpp                | Apache-2.0         | WebRTC's support code |
+| `webrtc-audio-processing` | BSD-3-Clause       | The Rust wrapper      |
+
+**WebRTC**, Copyright (c) 2011 Google Inc., asks that a built copy
+reproduce its copyright notice, its three conditions and its disclaimer
+in the documentation that goes with it. The full text ships with the
+`webrtc-audio-processing-sys` crate as `COPYING`, and is at
+https://webrtc.googlesource.com/src/+/main/LICENSE.
+
+**abseil-cpp**, under the Apache License 2.0, asks that the licence
+travel with what is distributed. It carries no NOTICE file.
+
+Nothing here reaches a network, at build time or after. The exceptions
+are building `ort`, which fetches the ONNX Runtime binaries it links
+against, and building with `webrtc-aec`, which fetches abseil-cpp from
+GitHub and its meson build files from wrapdb.mesonbuild.com.
