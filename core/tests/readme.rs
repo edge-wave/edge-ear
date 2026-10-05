@@ -41,3 +41,12 @@ fn the_readme_second_example(
         _ => {}
     })
 }
+
+/// The echo cancellation block. Compiled, not run, because only a build
+/// with the webrtc-aec feature accepts it.
+#[allow(dead_code)]
+fn the_readme_echo_example(ear: &EdgeEar) -> Result<()> {
+    ear.set_echo_cancellation(true)?; // before start
+    ear.start()?;
+    Ok(())
+}
