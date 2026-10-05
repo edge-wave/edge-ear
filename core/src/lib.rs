@@ -4,6 +4,7 @@
 
 pub mod backend;
 pub mod config;
+pub mod echo;
 pub mod error;
 pub mod events;
 
@@ -28,6 +29,7 @@ use std::time::Duration;
 use backend::{AudioBackend, DeviceInfo, FormatRequest, OutputStream, SupportedFormat};
 use capture::{CaptureThread, Consumer, ConsumerKind};
 use config::{AudioFormat, Config, Device, Target, TunableConfig};
+use echo::{EchoCanceller, EchoReference, EchoStage};
 use error::{Error, Result};
 use events::Event;
 use events::dispatch::{DEFAULT_QUEUE_CAPACITY, Dispatcher};
@@ -84,6 +86,17 @@ struct Inner {
     /// What the microphone opened at, which is not always what was
     /// asked for. Only while capture runs.
     opened_input: Option<AudioFormat>,
+    echo: EchoChoice,
+}
+
+/// Which echo canceller runs with capture, if any.
+enum EchoChoice {
+    Off,
+    /// WebRTC's, made at each start for the rates the consumers want.
+    #[cfg(feature = "webrtc-aec")]
+    Webrtc,
+    /// The application's own, kept across starts.
+    Own(Arc<Mutex<Box<dyn EchoCanceller>>>),
 }
 
 /// One wake word the application added, and how sure it must be.
@@ -127,6 +140,8 @@ pub struct EdgeEar {
     /// Shared rather than owned outright, because the player has to
     /// reach it to open the speaker again after an idle close.
     backend: Arc<Mutex<Box<dyn AudioBackend>>>,
+    /// What every speaker opened by this handle copies out, for the echo canceller.
+    echo_reference: Arc<EchoReference>,
 }
 
 impl EdgeEar {
@@ -189,9 +204,11 @@ impl EdgeEar {
                 tunable: Arc::new(Mutex::new(TunableConfig::default())),
                 waiting_now: Arc::new(AtomicBool::new(false)),
                 opened_input: None,
+                echo: EchoChoice::Off,
             }),
             dispatcher: Arc::new(Dispatcher::new(DEFAULT_QUEUE_CAPACITY)),
             backend: Arc::new(Mutex::new(backend)),
+            echo_reference: Arc::new(EchoReference::new()),
         })
     }
 
@@ -222,12 +239,21 @@ impl EdgeEar {
             self.backend_lock().open_input(&request),
         )?;
         log::info!("microphone opened at {:?}", stream.format());
+        let echo = note_failure(
+            "the echo canceller would not start",
+            echo_stage(&inner, &self.echo_reference, stream.format()),
+        )?;
         inner.opened_input = Some(stream.format());
 
         let consumers = build_consumers(&inner.config, inner.wake_wanted, inner.speech_wanted);
         let capture = note_failure(
             "the capture thread would not start",
-            CaptureThread::start(stream, consumers.clone(), Arc::clone(&self.dispatcher)),
+            CaptureThread::start(
+                stream,
+                consumers.clone(),
+                Arc::clone(&self.dispatcher),
+                echo,
+            ),
         )?;
 
         let speech_ring = consumers
@@ -696,19 +722,23 @@ impl EdgeEar {
             request.device,
             request.wanted
         );
-        let stream = note_failure(
+        let mut stream = note_failure(
             "the speaker would not open",
             self.backend_lock().open_output(&request),
         )?;
+        tap_speaker(stream.as_mut(), &self.echo_reference);
 
         // The player needs a way back to the device, asked for the way it
         // was first opened. Sounds are decoded into the first format.
         let format = stream.format();
         let reopen = {
             let backend = Arc::clone(&self.backend);
+            let reference = Arc::clone(&self.echo_reference);
             Box::new(move || {
                 let mut backend = backend.lock().unwrap_or_else(|e| e.into_inner());
-                reopen_output(backend.as_mut(), &request, format)
+                let mut stream = reopen_output(backend.as_mut(), &request, format)?;
+                tap_speaker(stream.as_mut(), &reference);
+                Ok(stream)
             })
         };
 
@@ -779,6 +809,43 @@ impl EdgeEar {
         self.alive()?;
         self.dispatcher.set_handler(Box::new(handler));
         Ok(())
+    }
+
+    // ── echo cancellation ────────────────────────────────────────────
+
+    /// Take what the speaker plays out of the microphone with WebRTC's canceller, from the next
+    /// start. Off by default, and refused in a build without the `webrtc-aec` feature.
+    pub fn set_echo_cancellation(&self, on: bool) -> Result<()> {
+        let mut inner = self.stopped_only("echo cancellation")?;
+        inner.echo = match on {
+            false => EchoChoice::Off,
+            #[cfg(feature = "webrtc-aec")]
+            true => EchoChoice::Webrtc,
+            #[cfg(not(feature = "webrtc-aec"))]
+            true => {
+                return Err(Error::InvalidValue {
+                    setting: "echo cancellation",
+                    expected: "off, since this build has no echo canceller".to_string(),
+                    got: "on".to_string(),
+                });
+            }
+        };
+        log::info!("echo cancellation {}", if on { "on" } else { "off" });
+        Ok(())
+    }
+
+    /// Cancel echo with the application's own canceller instead, from the next start.
+    /// It is kept across starts and reset at each one; turning echo cancellation off drops it.
+    pub fn set_echo_canceller(&self, canceller: Box<dyn EchoCanceller>) -> Result<()> {
+        let mut inner = self.stopped_only("echo cancellation")?;
+        inner.echo = EchoChoice::Own(Arc::new(Mutex::new(canceller)));
+        log::info!("echo cancellation on, with the application's canceller");
+        Ok(())
+    }
+
+    /// True when a canceller runs, or will run, with capture.
+    pub fn is_echo_cancellation_enabled(&self) -> bool {
+        !matches!(self.lock().echo, EchoChoice::Off)
     }
 
     // ── configuration ────────────────────────────────────────────────
@@ -1175,6 +1242,39 @@ fn reopen_output(
         device: first.device.clone(),
         wanted: Some(format),
     })
+}
+
+/// Point a speaker's copy of what it plays at the echo reference. A backend that cannot leaves
+/// its echo in the microphone.
+fn tap_speaker(stream: &mut dyn OutputStream, reference: &Arc<EchoReference>) {
+    if !stream.tap(Arc::clone(reference)) {
+        log::debug!("this speaker cannot say what it plays, so no echo of it can be cancelled");
+    }
+}
+
+/// The step that cancels echo on the way from the microphone, when one is wanted.
+fn echo_stage(
+    inner: &Inner,
+    reference: &Arc<EchoReference>,
+    device: AudioFormat,
+) -> Result<Option<EchoStage>> {
+    let canceller = match &inner.echo {
+        EchoChoice::Off => return Ok(None),
+        EchoChoice::Own(canceller) => Arc::clone(canceller),
+        #[cfg(feature = "webrtc-aec")]
+        EchoChoice::Webrtc => {
+            let fixed = &inner.config.fixed;
+            let wanted = [fixed.wake_format, fixed.speech_format, fixed.read_format]
+                .iter()
+                .map(|f| f.sample_rate)
+                .max()
+                .unwrap_or(16_000);
+            let canceller: Box<dyn EchoCanceller> =
+                Box::new(echo::webrtc::WebrtcCanceller::new(wanted)?);
+            Arc::new(Mutex::new(canceller))
+        }
+    };
+    EchoStage::new(canceller, Arc::clone(reference), device).map(Some)
 }
 
 fn note_failure<T>(what: &str, result: Result<T>) -> Result<T> {
