@@ -32,6 +32,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libpipewire-0.3-dev meson ninja-build pkg-config
 
+      # WebRTC's echo canceller is built from source for clippy --all-features.
+      - name: Install meson and ninja
+        if: runner.os == 'macOS'
+        run: brew install meson ninja
+
       # rust-toolchain.toml pins the version, so this only fetches it.
       - name: Fetch the pinned toolchain
         run: rustup show
@@ -54,6 +59,9 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace
+
+      - name: Echo cancellation with WebRTC
+        run: cargo test -p edge-ear-core --features webrtc-aec --lib --test echo_cancellation
 
       # A runner has no microphone, so this links the C sources without
       # running them. The link line is platform specific.
