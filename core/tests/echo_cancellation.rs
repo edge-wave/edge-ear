@@ -166,6 +166,8 @@ fn echo_read_back(cancel: bool, microphone: AudioFormat, speaker: AudioFormat) -
         output_defaults: vec![speaker],
         paced: true,
         echo_gain: Some(0.5),
+        // A device's own latency, so the room hears each block after it was handed over.
+        output_delay: Duration::from_millis(20),
         ..Default::default()
     });
     let ear = EdgeEar::with_backend(Box::new(backend)).expect("handle");
