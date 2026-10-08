@@ -12,6 +12,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 
 use edge_ear_core::config::{AudioFormat, SampleType, Target};
+use edge_ear_core::echo::{BuiltinCanceller, CancellerKind};
 use edge_ear_core::error::Error;
 use edge_ear_core::events::{EndReason, Event};
 use edge_ear_core::{EdgeEar as Core, Samples, SoundSource};
@@ -768,15 +769,29 @@ impl EdgeEar {
             .collect())
     }
 
-    /// Take what the speaker plays out of the microphone with WebRTC's canceller, from the next
-    /// start. Only a build with the webrtc-aec feature has it.
-    fn set_echo_cancellation(&self, on: bool) -> PyResult<()> {
-        self.core.set_echo_cancellation(on).map_err(to_py)
+    /// The echo canceller edge-ear runs itself, "off" or "webrtc", removing only what this
+    /// handle plays. For a system one, open its devices and leave this "off". Set before start.
+    fn set_echo_canceller(&self, name: &str) -> PyResult<()> {
+        let canceller = match name {
+            "off" => BuiltinCanceller::Off,
+            "webrtc" => BuiltinCanceller::Webrtc,
+            other => {
+                return Err(InvalidValue::new_err(format!(
+                    "the echo canceller must be off or webrtc, got {other:?}"
+                )));
+            }
+        };
+        self.core.set_echo_canceller(canceller).map_err(to_py)
     }
 
+    /// "off", "webrtc" or "custom". "off" says nothing about a system canceller.
     #[getter]
-    fn is_echo_cancellation_enabled(&self) -> bool {
-        self.core.is_echo_cancellation_enabled()
+    fn echo_canceller(&self) -> &'static str {
+        match self.core.echo_canceller() {
+            CancellerKind::Off => "off",
+            CancellerKind::Webrtc => "webrtc",
+            CancellerKind::Custom => "custom",
+        }
     }
 
     #[pyo3(signature = (id = None))]
