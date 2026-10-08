@@ -16,6 +16,7 @@ use edge_ear_core::EdgeEar;
 use edge_ear_core::Samples;
 use edge_ear_core::SoundSource;
 use edge_ear_core::config::{AudioFormat, SampleType, Target};
+use edge_ear_core::echo::{BuiltinCanceller, CancellerKind};
 
 use convert::{duration, optional_str, out_ptr, required_str};
 use error::*;
@@ -894,35 +895,84 @@ pub unsafe extern "C" fn edge_ear_is_playing(ear: edge_ear_h) -> i32 {
     with!(ear, e => i32::from(e.core.is_playing()))
 }
 
-// ---- echo cancellation -------------------------------------------
+// ---- built-in echo cancellation ----------------------------------
 
-/// @brief Take what the speaker plays out of the microphone, with
-///        WebRTC's echo canceller.
-///
-/// Off by default. Every consumer gets the cleaned microphone from the
-/// next start, so this is set before capture starts. Only a library
-/// built with the `webrtc-aec` feature has the canceller.
-///
-/// @param[in] ear the handle
-/// @param[in] on non-zero to cancel echo
-/// @return #EDGE_EAR_OK, #EDGE_EAR_RUNNING_NOT_ALLOWED while capturing,
-///         #EDGE_EAR_INVALID_VALUE when turned on in a build without
-///         the canceller, or another negative #edge_ear_error.
-/// @see edge_ear_is_echo_cancellation_enabled
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_set_echo_cancellation(ear: edge_ear_h, on: i32) -> i32 {
-    with!(ear, e => report(e.core.set_echo_cancellation(on != 0)))
+#[repr(i32)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+/// Which canceller edge-ear runs itself, on its own playback.
+#[allow(non_camel_case_types)]
+pub enum edge_ear_echo_canceller {
+    /// None runs inside edge-ear. The default, and the choice when a
+    /// system canceller's device is opened instead.
+    EDGE_EAR_ECHO_CANCELLER_OFF = 0,
+    /// WebRTC's AEC3, in a library built with `webrtc-aec`.
+    EDGE_EAR_ECHO_CANCELLER_WEBRTC = 1,
+    /// One the application set through the Rust API. Reported only;
+    /// it cannot be set from C.
+    EDGE_EAR_ECHO_CANCELLER_CUSTOM = 2,
 }
 
-/// @brief Whether echo is taken out of the microphone.
+/// @brief Choose the echo canceller built into edge-ear.
+///
+/// It runs inside this library and removes from the microphone only
+/// what this handle plays with edge_ear_play_sound, before the wake
+/// word, speech and read paths see the audio. Sound from other programs
+/// stays. A system canceller, such as PipeWire's echo-cancel source and
+/// sink, is used by opening its devices instead, with this left at
+/// #EDGE_EAR_ECHO_CANCELLER_OFF. Set before capture starts.
 ///
 /// @param[in] ear the handle
-/// @return 1 when on, 0 when off, #EDGE_EAR_NULL_ARGUMENT for a null
-///         handle.
-/// @see edge_ear_set_echo_cancellation
+/// @param[in] which #EDGE_EAR_ECHO_CANCELLER_OFF or
+///            #EDGE_EAR_ECHO_CANCELLER_WEBRTC
+/// @return #EDGE_EAR_OK, #EDGE_EAR_RUNNING_NOT_ALLOWED while capturing,
+///         #EDGE_EAR_INVALID_VALUE for WebRTC in a build without it or
+///         for #EDGE_EAR_ECHO_CANCELLER_CUSTOM, or another negative
+///         #edge_ear_error.
+/// @see edge_ear_get_echo_canceller, edge_ear_set_input_device
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn edge_ear_is_echo_cancellation_enabled(ear: edge_ear_h) -> i32 {
-    with!(ear, e => i32::from(e.core.is_echo_cancellation_enabled()))
+pub unsafe extern "C" fn edge_ear_set_echo_canceller(
+    ear: edge_ear_h,
+    which: edge_ear_echo_canceller,
+) -> i32 {
+    with!(ear, e => {
+        let canceller = match which {
+            edge_ear_echo_canceller::EDGE_EAR_ECHO_CANCELLER_OFF => BuiltinCanceller::Off,
+            edge_ear_echo_canceller::EDGE_EAR_ECHO_CANCELLER_WEBRTC => BuiltinCanceller::Webrtc,
+            edge_ear_echo_canceller::EDGE_EAR_ECHO_CANCELLER_CUSTOM => {
+                return fail_with(
+                    EDGE_EAR_INVALID_VALUE,
+                    "a custom echo canceller can only be set from Rust",
+                );
+            }
+        };
+        report(e.core.set_echo_canceller(canceller))
+    })
+}
+
+/// @brief Which echo canceller is built into edge-ear for this handle.
+///
+/// #EDGE_EAR_ECHO_CANCELLER_OFF says only that edge-ear runs none
+/// itself. A system canceller in front of the microphone is not seen
+/// here.
+///
+/// @param[in] ear the handle
+/// @param[out] which where the choice goes
+/// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+/// @see edge_ear_set_echo_canceller
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edge_ear_get_echo_canceller(
+    ear: edge_ear_h,
+    which: *mut edge_ear_echo_canceller,
+) -> i32 {
+    with!(ear, e => {
+        let which = ok_or_return!(out_ptr(which, "which"));
+        *which = match e.core.echo_canceller() {
+            CancellerKind::Off => edge_ear_echo_canceller::EDGE_EAR_ECHO_CANCELLER_OFF,
+            CancellerKind::Webrtc => edge_ear_echo_canceller::EDGE_EAR_ECHO_CANCELLER_WEBRTC,
+            CancellerKind::Custom => edge_ear_echo_canceller::EDGE_EAR_ECHO_CANCELLER_CUSTOM,
+        };
+        OK
+    })
 }
 
 // ---- devices -----------------------------------------------------
