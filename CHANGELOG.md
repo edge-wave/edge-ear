@@ -9,15 +9,17 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 
 ### Added
 
-- Echo cancellation. `set_echo_cancellation` takes what the speaker
-  plays out of the microphone with WebRTC's AEC3 before any consumer
-  sees it, built in by the new `webrtc-aec` feature in core, capi and
-  py; without the feature, turning it on is refused. The canceller is
-  swappable: `set_echo_canceller` takes anything that implements
-  `echo::EchoCanceller`. The C API adds
-  `edge_ear_set_echo_cancellation` and
-  `edge_ear_is_echo_cancellation_enabled`, and Python the matching
-  method and property.
+- A built-in echo canceller. `set_echo_canceller` chooses one that runs
+  inside edge-ear and takes what this handle plays out of the
+  microphone before any consumer sees it: `BuiltinCanceller::Webrtc`,
+  WebRTC's AEC3 from the new `webrtc-aec` feature in core, capi and py,
+  or `Custom` with anything that implements `echo::EchoCanceller`.
+  It is `Off` by default, and WebRTC is refused in a build without the
+  feature. `echo_canceller()` says which is set. A system canceller,
+  such as PipeWire's, is used by opening its devices instead. The C API
+  adds `edge_ear_set_echo_canceller` and `edge_ear_get_echo_canceller`
+  with `edge_ear_echo_canceller`, and Python `set_echo_canceller` with
+  `"off"` or `"webrtc"` and the `echo_canceller` property.
 - `OutputStream::tap` copies everything a speaker plays, silence
   included, for the echo canceller. It has a default that declines, so
   a backend written outside this library still builds and leaves its
