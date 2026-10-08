@@ -31,6 +31,24 @@ pub trait EchoCanceller: Send {
     fn reset(&mut self) {}
 }
 
+/// Which canceller edge-ear runs itself, on its own playback only. A system canceller, such as
+/// PipeWire's echo-cancel source, is chosen as a device instead, with this left `Off`.
+pub enum BuiltinCanceller {
+    Off,
+    /// WebRTC's AEC3, which needs the `webrtc-aec` feature.
+    Webrtc,
+    /// The application's own, kept across starts and reset at each one.
+    Custom(Box<dyn EchoCanceller>),
+}
+
+/// Which built-in canceller is set, without the canceller itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancellerKind {
+    Off,
+    Webrtc,
+    Custom,
+}
+
 /// How long before it is heard a speaker block is handed over. It covers a delay reported a
 /// little long and what resampling holds back, and stays far inside what a canceller searches.
 const RENDER_LEAD: Duration = Duration::from_millis(50);
