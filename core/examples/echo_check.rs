@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use edge_ear_core::echo::BuiltinCanceller;
 use edge_ear_core::{EdgeEar, Samples, SoundSource};
 
 const HELP: &str = "\
@@ -62,7 +63,11 @@ fn listen(
     volume: Option<f32>,
 ) -> edge_ear_core::error::Result<Vec<f64>> {
     let ear = EdgeEar::new()?;
-    ear.set_echo_cancellation(cancel)?;
+    ear.set_echo_canceller(if cancel {
+        BuiltinCanceller::Webrtc
+    } else {
+        BuiltinCanceller::Off
+    })?;
     ear.start()?;
     if let Some(volume) = volume {
         ear.register_sound("noise", noise(seconds), volume)?;

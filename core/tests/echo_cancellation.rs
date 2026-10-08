@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use edge_ear_core::backend::fake::{FakeBackend, FakeSetup};
 use edge_ear_core::config::AudioFormat;
-use edge_ear_core::echo::EchoCanceller;
+use edge_ear_core::echo::{BuiltinCanceller, CancellerKind, EchoCanceller};
 use edge_ear_core::error::Error;
 use edge_ear_core::{EdgeEar, Samples, SoundSource};
 
@@ -51,7 +51,8 @@ fn ear_hearing_something() -> EdgeEar {
 
 fn silencer(ear: &EdgeEar) -> Arc<Mutex<Log>> {
     let log = Arc::new(Mutex::new(Log::default()));
-    ear.set_echo_canceller(Box::new(Silencer(Arc::clone(&log))))
+    let own = Box::new(Silencer(Arc::clone(&log)));
+    ear.set_echo_canceller(BuiltinCanceller::Custom(own))
         .unwrap();
     log
 }
@@ -113,7 +114,7 @@ fn every_reader_gets_the_cleaned_microphone() {
 #[test]
 fn without_a_canceller_the_microphone_is_left_alone() {
     let ear = ear_hearing_something();
-    assert!(!ear.is_echo_cancellation_enabled());
+    assert_eq!(ear.echo_canceller(), CancellerKind::Off);
     ear.start().unwrap();
 
     let chunk = ear.read(Some(Duration::from_secs(2))).unwrap();
@@ -124,7 +125,7 @@ fn without_a_canceller_the_microphone_is_left_alone() {
 fn the_canceller_starts_afresh_with_each_capture() {
     let ear = ear_hearing_something();
     let log = silencer(&ear);
-    assert!(ear.is_echo_cancellation_enabled());
+    assert_eq!(ear.echo_canceller(), CancellerKind::Custom);
 
     ear.start().unwrap();
     ear.stop().unwrap();
@@ -136,21 +137,23 @@ fn the_canceller_starts_afresh_with_each_capture() {
 fn the_choice_is_made_before_capture_starts() {
     let ear = ear_hearing_something();
     ear.start().unwrap();
-    let err = ear.set_echo_cancellation(false).expect_err("must fail");
+    let err = ear
+        .set_echo_canceller(BuiltinCanceller::Off)
+        .expect_err("must fail");
     assert!(matches!(err, Error::RunningNotAllowed { .. }), "{err}");
 
     ear.stop().unwrap();
     silencer(&ear);
-    ear.set_echo_cancellation(false).unwrap();
-    assert!(!ear.is_echo_cancellation_enabled());
+    ear.set_echo_canceller(BuiltinCanceller::Off).unwrap();
+    assert_eq!(ear.echo_canceller(), CancellerKind::Off);
 }
 
 #[cfg(feature = "webrtc-aec")]
 #[test]
 fn webrtc_runs_with_capture_when_asked_for() {
     let ear = ear_hearing_something();
-    ear.set_echo_cancellation(true).unwrap();
-    assert!(ear.is_echo_cancellation_enabled());
+    ear.set_echo_canceller(BuiltinCanceller::Webrtc).unwrap();
+    assert_eq!(ear.echo_canceller(), CancellerKind::Webrtc);
     ear.start().unwrap();
 
     let chunk = ear.read(Some(Duration::from_secs(2))).unwrap();
@@ -171,7 +174,12 @@ fn echo_read_back(cancel: bool, microphone: AudioFormat, speaker: AudioFormat) -
         ..Default::default()
     });
     let ear = EdgeEar::with_backend(Box::new(backend)).expect("handle");
-    ear.set_echo_cancellation(cancel).unwrap();
+    let canceller = if cancel {
+        BuiltinCanceller::Webrtc
+    } else {
+        BuiltinCanceller::Off
+    };
+    ear.set_echo_canceller(canceller).unwrap();
     ear.start().unwrap();
 
     let mut seed = 7u32;
@@ -234,7 +242,9 @@ fn webrtc_does_so_across_resampling_on_both_sides() {
 #[test]
 fn a_build_without_webrtc_refuses_it() {
     let ear = ear_hearing_something();
-    let err = ear.set_echo_cancellation(true).expect_err("must fail");
+    let err = ear
+        .set_echo_canceller(BuiltinCanceller::Webrtc)
+        .expect_err("must fail");
     assert!(matches!(err, Error::InvalidValue { .. }), "{err}");
-    assert!(!ear.is_echo_cancellation_enabled());
+    assert_eq!(ear.echo_canceller(), CancellerKind::Off);
 }

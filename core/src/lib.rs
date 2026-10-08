@@ -29,7 +29,7 @@ use std::time::Duration;
 use backend::{AudioBackend, DeviceInfo, FormatRequest, OutputStream, SupportedFormat};
 use capture::{CaptureThread, Consumer, ConsumerKind};
 use config::{AudioFormat, Config, Device, Target, TunableConfig};
-use echo::{EchoCanceller, EchoReference, EchoStage};
+use echo::{BuiltinCanceller, CancellerKind, EchoCanceller, EchoReference, EchoStage};
 use error::{Error, Result};
 use events::Event;
 use events::dispatch::{DEFAULT_QUEUE_CAPACITY, Dispatcher};
@@ -97,6 +97,17 @@ enum EchoChoice {
     Webrtc,
     /// The application's own, kept across starts.
     Own(Arc<Mutex<Box<dyn EchoCanceller>>>),
+}
+
+impl EchoChoice {
+    fn kind(&self) -> CancellerKind {
+        match self {
+            EchoChoice::Off => CancellerKind::Off,
+            #[cfg(feature = "webrtc-aec")]
+            EchoChoice::Webrtc => CancellerKind::Webrtc,
+            EchoChoice::Own(_) => CancellerKind::Custom,
+        }
+    }
 }
 
 /// One wake word the application added, and how sure it must be.
@@ -811,41 +822,33 @@ impl EdgeEar {
         Ok(())
     }
 
-    // ── echo cancellation ────────────────────────────────────────────
+    // ── built-in echo cancellation ───────────────────────────────────
 
-    /// Take what the speaker plays out of the microphone with WebRTC's canceller, from the next
-    /// start. Off by default, and refused in a build without the `webrtc-aec` feature.
-    pub fn set_echo_cancellation(&self, on: bool) -> Result<()> {
-        let mut inner = self.stopped_only("echo cancellation")?;
-        inner.echo = match on {
-            false => EchoChoice::Off,
+    /// Choose the canceller edge-ear runs itself, from the next start. It removes only what this
+    /// handle plays; for a system canceller, open its devices and leave this `Off`, the default.
+    pub fn set_echo_canceller(&self, canceller: BuiltinCanceller) -> Result<()> {
+        let mut inner = self.stopped_only("the echo canceller")?;
+        inner.echo = match canceller {
+            BuiltinCanceller::Off => EchoChoice::Off,
             #[cfg(feature = "webrtc-aec")]
-            true => EchoChoice::Webrtc,
+            BuiltinCanceller::Webrtc => EchoChoice::Webrtc,
             #[cfg(not(feature = "webrtc-aec"))]
-            true => {
+            BuiltinCanceller::Webrtc => {
                 return Err(Error::InvalidValue {
-                    setting: "echo cancellation",
-                    expected: "off, since this build has no echo canceller".to_string(),
-                    got: "on".to_string(),
+                    setting: "the echo canceller",
+                    expected: "off or custom, since this build has no WebRTC".to_string(),
+                    got: "webrtc".to_string(),
                 });
             }
+            BuiltinCanceller::Custom(own) => EchoChoice::Own(Arc::new(Mutex::new(own))),
         };
-        log::info!("echo cancellation {}", if on { "on" } else { "off" });
+        log::info!("built-in echo canceller: {:?}", inner.echo.kind());
         Ok(())
     }
 
-    /// Cancel echo with the application's own canceller instead, from the next start.
-    /// It is kept across starts and reset at each one; turning echo cancellation off drops it.
-    pub fn set_echo_canceller(&self, canceller: Box<dyn EchoCanceller>) -> Result<()> {
-        let mut inner = self.stopped_only("echo cancellation")?;
-        inner.echo = EchoChoice::Own(Arc::new(Mutex::new(canceller)));
-        log::info!("echo cancellation on, with the application's canceller");
-        Ok(())
-    }
-
-    /// True when a canceller runs, or will run, with capture.
-    pub fn is_echo_cancellation_enabled(&self) -> bool {
-        !matches!(self.lock().echo, EchoChoice::Off)
+    /// Which canceller edge-ear runs itself. `Off` says nothing about a system canceller.
+    pub fn echo_canceller(&self) -> CancellerKind {
+        self.lock().echo.kind()
     }
 
     // ── configuration ────────────────────────────────────────────────
