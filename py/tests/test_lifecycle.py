@@ -98,10 +98,12 @@ def test_waiting_for_the_alert_is_off_until_it_is_asked_for():
         ear.set_wake_recording_waits_for_alert(False)
 
 
-def test_echo_cancellation_is_off_until_it_is_asked_for():
+def test_the_built_in_echo_canceller_is_off_until_it_is_asked_for():
     with edge_ear.EdgeEar() as ear:
-        assert not ear.is_echo_cancellation_enabled
-        ear.set_echo_cancellation(False)
+        assert ear.echo_canceller == "off"
+        ear.set_echo_canceller("off")
+        with pytest.raises(edge_ear.InvalidValue):
+            ear.set_echo_canceller("speex")
 
 
 def test_a_device_says_what_it_will_take():
