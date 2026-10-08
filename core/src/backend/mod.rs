@@ -8,10 +8,12 @@ pub mod playout;
 #[cfg(all(feature = "tinypipewire-backend", target_os = "linux"))]
 pub mod tinypipewire_backend;
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::capture::Samples;
 use crate::config::{AudioFormat, Device, SampleType};
+use crate::echo::EchoReference;
 use crate::error::Result;
 
 /// What a device says it is.
@@ -87,6 +89,13 @@ pub trait OutputStream: Send {
     /// the rest, and say how many samples went. The default drops nothing.
     fn flush(&mut self) -> u64 {
         0
+    }
+
+    /// Copy everything the device takes from here on, silence included, into `reference`, so its
+    /// echo can be taken out of the microphone. The default cannot and says so with `false`.
+    fn tap(&mut self, reference: Arc<EchoReference>) -> bool {
+        let _ = reference;
+        false
     }
 
     fn stop(&mut self) -> Result<()>;

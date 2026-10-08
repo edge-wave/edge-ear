@@ -175,6 +175,37 @@ typedef int32_t edge_ear_sample_type;
 #endif // __cplusplus
 
 /**
+ * Which canceller edge-ear runs itself, on its own playback.
+ */
+enum edge_ear_echo_canceller
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : int32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * None runs inside edge-ear. The default, and the choice when a
+     * system canceller's device is opened instead.
+     */
+    EDGE_EAR_ECHO_CANCELLER_OFF = 0,
+    /**
+     * WebRTC's AEC3, in a library built with `webrtc-aec`.
+     */
+    EDGE_EAR_ECHO_CANCELLER_WEBRTC = 1,
+    /**
+     * One the application set through the Rust API. Reported only;
+     * it cannot be set from C.
+     */
+    EDGE_EAR_ECHO_CANCELLER_CUSTOM = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum edge_ear_echo_canceller edge_ear_echo_canceller;
+#else
+typedef int32_t edge_ear_echo_canceller;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * Which of the three readers of live audio a setting is about.
  */
 enum edge_ear_target
@@ -989,6 +1020,41 @@ int32_t edge_ear_stop_sound(edge_ear_h ear);
  *         null handle.
  */
 int32_t edge_ear_is_playing(edge_ear_h ear);
+
+/**
+ * @brief Choose the echo canceller built into edge-ear.
+ *
+ * It runs inside this library and removes from the microphone only
+ * what this handle plays with edge_ear_play_sound, before the wake
+ * word, speech and read paths see the audio. Sound from other programs
+ * stays. A system canceller, such as PipeWire's echo-cancel source and
+ * sink, is used by opening its devices instead, with this left at
+ * #EDGE_EAR_ECHO_CANCELLER_OFF. Set before capture starts.
+ *
+ * @param[in] ear the handle
+ * @param[in] which #EDGE_EAR_ECHO_CANCELLER_OFF or
+ *            #EDGE_EAR_ECHO_CANCELLER_WEBRTC
+ * @return #EDGE_EAR_OK, #EDGE_EAR_RUNNING_NOT_ALLOWED while capturing,
+ *         #EDGE_EAR_INVALID_VALUE for WebRTC in a build without it or
+ *         for #EDGE_EAR_ECHO_CANCELLER_CUSTOM, or another negative
+ *         #edge_ear_error.
+ * @see edge_ear_get_echo_canceller, edge_ear_set_input_device
+ */
+int32_t edge_ear_set_echo_canceller(edge_ear_h ear, edge_ear_echo_canceller which);
+
+/**
+ * @brief Which echo canceller is built into edge-ear for this handle.
+ *
+ * #EDGE_EAR_ECHO_CANCELLER_OFF says only that edge-ear runs none
+ * itself. A system canceller in front of the microphone is not seen
+ * here.
+ *
+ * @param[in] ear the handle
+ * @param[out] which where the choice goes
+ * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
+ * @see edge_ear_set_echo_canceller
+ */
+int32_t edge_ear_get_echo_canceller(edge_ear_h ear, edge_ear_echo_canceller *which);
 
 /**
  * @brief Open the microphone at this rather than at its default.

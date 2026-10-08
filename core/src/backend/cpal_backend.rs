@@ -16,6 +16,7 @@ use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, 
 use crate::capture::Samples;
 use crate::capture::ring::{LossReport, Ring};
 use crate::config::{AudioFormat, Device, SampleType};
+use crate::echo::EchoReference;
 use crate::error::{Error, Result};
 
 /// Blocks the device queue holds before the oldest goes. The capture
@@ -265,6 +266,11 @@ impl OutputStream for CpalOutput {
     fn flush(&mut self) -> u64 {
         let format = self.format;
         self.queue.edit(|queued| fade_out(queued, format))
+    }
+
+    fn tap(&mut self, reference: Arc<EchoReference>) -> bool {
+        self.playout.set_tap(reference);
+        true
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -531,6 +537,7 @@ impl AudioBackend for CpalBackend {
                                 ahead = guessed_ahead(data.len(), format);
                             }
                             playout.took(real, ahead);
+                            playout.played(ahead, || data_to_samples(data, sample_format));
                         },
                         // This runs on a device fault rather than per block, so logging is safe.
                         |err| log::error!("speaker stream error: {err}"),

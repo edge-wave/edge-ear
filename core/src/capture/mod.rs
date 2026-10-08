@@ -10,6 +10,7 @@ use crate::backend::InputStream;
 use crate::capture::convert::{Converter, FrameAccumulator};
 use crate::capture::ring::Ring;
 use crate::config::{AudioFormat, Device, SampleType};
+use crate::echo::EchoStage;
 use crate::error::{Error, Result};
 use crate::events::Event;
 use crate::events::dispatch::Dispatcher;
@@ -188,6 +189,7 @@ impl CaptureThread {
         stream: Box<dyn InputStream>,
         consumers: Vec<Consumer>,
         dispatcher: Arc<Dispatcher>,
+        echo: Option<EchoStage>,
     ) -> Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let rings = consumers.iter().map(|c| Arc::clone(&c.ring)).collect();
@@ -196,7 +198,7 @@ impl CaptureThread {
             let stop = Arc::clone(&stop);
             thread::Builder::new()
                 .name("edge-ear-capture".to_string())
-                .spawn(move || run(stream, consumers, dispatcher, stop))
+                .spawn(move || run(stream, consumers, dispatcher, stop, echo))
                 .map_err(|e| Error::Backend {
                     device: Device::Input,
                     reason: format!("capture thread would not start: {e}"),
@@ -233,8 +235,10 @@ fn run(
     consumers: Vec<Consumer>,
     dispatcher: Arc<Dispatcher>,
     stop: Arc<AtomicBool>,
+    mut echo: Option<EchoStage>,
 ) {
-    let device_format = stream.format();
+    // With echo being cancelled, the consumers take what the canceller hands back.
+    let device_format = echo.as_ref().map_or(stream.format(), EchoStage::format);
 
     // One converter per wanted format, not one per consumer. Two
     // consumers asking for the same thing share the work.
@@ -278,6 +282,7 @@ fn run(
 
     // A conversion failure is logged when it starts, not on every block.
     let mut converting_failed = false;
+    let mut cancelling_failed = false;
 
     while !stop.load(Ordering::Relaxed) {
         let block = match stream.read() {
@@ -293,6 +298,24 @@ fn run(
             }
         };
         let captured_at = Instant::now();
+        let block = match echo.as_mut().map(|stage| stage.process(&block)) {
+            None => block,
+            Some(Ok(cleaned)) => {
+                cancelling_failed = false;
+                cleaned
+            }
+            Some(Err(e)) => {
+                if !cancelling_failed {
+                    log::error!("echo could not be taken out of the microphone: {e}");
+                    dispatcher.emit(Event::DeviceError {
+                        device: Device::Input,
+                        message: e.to_string(),
+                    });
+                }
+                cancelling_failed = true;
+                continue;
+            }
+        };
 
         // Convert once per wanted format.
         let mut converted: Vec<Option<Samples>> = Vec::with_capacity(converters.len());

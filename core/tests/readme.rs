@@ -2,6 +2,7 @@
 
 use edge_ear_core::EdgeEar;
 use edge_ear_core::backend::fake::FakeBackend;
+use edge_ear_core::echo::BuiltinCanceller;
 use edge_ear_core::error::Result;
 use edge_ear_core::events::Event;
 use std::path::Path;
@@ -40,4 +41,13 @@ fn the_readme_second_example(
         }
         _ => {}
     })
+}
+
+/// The echo cancellation block. Compiled, not run, because only a build
+/// with the webrtc-aec feature accepts it.
+#[allow(dead_code)]
+fn the_readme_echo_example(ear: &EdgeEar) -> Result<()> {
+    ear.set_echo_canceller(BuiltinCanceller::Webrtc)?; // before start
+    ear.start()?;
+    Ok(())
 }

@@ -93,6 +93,46 @@ cargo build -p edge-ear-core --no-default-features \
   --features tinypipewire-backend
 ```
 
+## Echo cancellation
+
+The microphone also hears what the library plays. There are two ways to
+take that back out, and they are chosen in different places.
+
+**A system canceller**, such as PipeWire's `module-echo-cancel`, is
+chosen as a device. Open its echo-cancel source with `set_input_device`
+and play into its echo-cancel sink, or leave both on the defaults when
+the system already points there. It takes out what every program plays
+through that sink. Leave the built-in canceller off.
+
+**The built-in canceller** runs inside edge-ear. Each speaker callback
+copies what it played, silence included, and the capture thread takes it
+back out before the wake word detector, the speech detector or `read`
+see the audio. It takes out only what this handle plays with
+`play_sound`; sound from another program keeps its echo. It is what to
+use where there is no system canceller, such as on ALSA alone.
+
+WebRTC's AEC3 comes with the `webrtc-aec` feature. It is compiled from
+source, which needs meson, ninja and a C++ compiler, and the first build
+fetches abseil-cpp:
+
+```bash
+brew install meson ninja                          # macOS
+sudo apt install meson ninja-build libclang-dev   # Linux
+cargo build -p edge-ear-core --features webrtc-aec
+```
+
+```rust
+ear.set_echo_canceller(BuiltinCanceller::Webrtc)?; // before start
+ear.start()?;
+```
+
+It is off by default. Any other canceller can run in its place through
+`BuiltinCanceller::Custom` and the `EchoCanceller` trait: it is handed
+one channel of f32 in 10 ms frames, each speaker frame before the
+microphone frames that can hold its echo, and finds the delay between
+them itself. `echo_canceller()` says which built-in one is set; `Off`
+there says nothing about a system canceller in front of the microphone.
+
 ## Building
 
 ```bash
@@ -131,6 +171,9 @@ cd py && maturin develop
 # or against PipeWire
 cd py && maturin develop \
   --no-default-features --features tinypipewire-backend
+
+# with WebRTC's echo canceller built in
+cd py && maturin develop --features webrtc-aec
 ```
 
 ```python
