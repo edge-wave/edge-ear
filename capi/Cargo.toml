@@ -19,7 +19,30 @@ default = ["cpal-backend"]
 # cpal is off.
 cpal-backend = ["edge-ear-core/cpal-backend"]
 pipewire-flow-backend = ["edge-ear-core/pipewire-flow-backend"]
+# Marks this crate for cargo-c, which builds and installs it as a C library.
+capi = []
 
 [dependencies]
 edge-ear-core.workspace = true
 log.workspace = true
+
+# `cargo cinstall` installs libedge-ear with a versioned soname, edge-ear.pc
+# and the committed header, so a C project finds it through pkg-config.
+[package.metadata.capi]
+min_version = "0.10.0"
+
+[package.metadata.capi.library]
+name = "edge-ear"
+
+[package.metadata.capi.header]
+name = "edge_ear"
+subdirectory = "edge-ear"
+generation = false
+
+[package.metadata.capi.install.include]
+asset = [{ from = "include/edge_ear.h", to = "edge-ear" }]
+
+[package.metadata.capi.pkg_config]
+name = "edge-ear"
+filename = "edge-ear"
+description = "A local, real-time audio front end: capture, wake word, end of speech and playback"
