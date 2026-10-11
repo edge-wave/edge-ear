@@ -347,10 +347,10 @@ dependencies = [
  "libc",
  "log",
  "ort",
+ "pipewire-flow",
  "rubato",
  "symphonia",
  "thiserror 2.0.20",
- "tinypipewire",
 ]
 
 [[package]]
@@ -997,6 +997,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "pipewire-flow"
+version = "0.2.0"
+source = "git+https://github.com/pipewire-flow/pipewire-flow-rs?rev=c053e7269738f4833ffcb1f7a7e7598cd35c18b5#c053e7269738f4833ffcb1f7a7e7598cd35c18b5"
+dependencies = [
+ "pipewire-flow-sys",
+]
+
+[[package]]
+name = "pipewire-flow-sys"
+version = "0.2.0+pwf0.12.0"
+source = "git+https://github.com/pipewire-flow/pipewire-flow-rs?rev=c053e7269738f4833ffcb1f7a7e7598cd35c18b5#c053e7269738f4833ffcb1f7a7e7598cd35c18b5"
+dependencies = [
+ "pkg-config",
+]
+
+[[package]]
 name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1539,22 +1555,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
-]
-
-[[package]]
-name = "tinypipewire"
-version = "0.1.0"
-source = "git+https://github.com/tinyPipeWire/tinypipewire-rs?rev=a0e006bc180e0235893bf4b0d8d30feb1e99c0e1#a0e006bc180e0235893bf4b0d8d30feb1e99c0e1"
-dependencies = [
- "tinypipewire-sys",
-]
-
-[[package]]
-name = "tinypipewire-sys"
-version = "0.1.0+tpw0.9.1"
-source = "git+https://github.com/tinyPipeWire/tinypipewire-rs?rev=a0e006bc180e0235893bf4b0d8d30feb1e99c0e1#a0e006bc180e0235893bf4b0d8d30feb1e99c0e1"
-dependencies = [
- "pkg-config",
 ]
 
 [[package]]

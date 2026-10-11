@@ -17,7 +17,7 @@ default = ["cpal-backend"]
 # leaves the backend trait in place, so another implementation can take
 # over without dragging ALSA or CoreAudio in.
 cpal-backend = ["dep:cpal"]
-tinypipewire-backend = ["dep:tinypipewire", "dep:libc"]
+pipewire-flow-backend = ["dep:pipewire-flow", "dep:libc"]
 
 [dependencies]
 cpal = { workspace = true, optional = true }
@@ -33,6 +33,6 @@ ort.workspace = true
 env_logger.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tinypipewire = { workspace = true, optional = true }
+pipewire-flow = { workspace = true, optional = true }
 # PipeWire times playback on CLOCK_MONOTONIC, which std cannot read out.
 libc = { workspace = true, optional = true }

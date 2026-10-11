@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # PipeWire, meson and ninja build tinypipewire's C sources for
+      # PipeWire, meson and ninja build pipewire-flow's C sources for
       # clippy --all-features.
       - name: Install the audio headers
         if: runner.os == 'Linux'
