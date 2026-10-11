@@ -16,6 +16,14 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 
 ### Changed
 
+- **Breaking:** the PipeWire backend follows its library, renamed from
+  tinypipewire to pipewire-flow. The feature is `pipewire-flow-backend`
+  in core, capi and py, the backend is
+  `backend::pipewire_flow_backend::PipewireFlowBackend`, its handle is
+  built with `EdgeEar::with_pipewire_flow()`, and it describes itself as
+  `"pipewire-flow"`. It now depends on the public `pipewire-flow-rs`
+  instead of the old repository, which can no longer be fetched. A
+  target that names no node is reported as no device.
 - `SoundFinished` now arrives once the last audible sample of a sound
   has been heard, not when it was handed to the device. The silence
   padded around every sound against clicks is not waited for, so a sound
@@ -24,7 +32,7 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
   48 kHz stereo speaker, and more on a slower one. `is_playing` stays true
   until the same moment, and a recording that waits for the wake alert
   now opens after the alert has actually been heard. cpal and
-  tinypipewire both report how far ahead of the speaker they run; a host
+  pipewire-flow both report how far ahead of the speaker they run; a host
   that cannot say is taken to be one buffer ahead.
 
 ### Fixed

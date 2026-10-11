@@ -77,7 +77,7 @@ swappable. Each wrapper names the one it wants at build time:
 | Feature | Reaches the devices through | Platforms |
 |---------|-----------------------------|-----------|
 | `cpal-backend` (default) | `cpal` | macOS, Linux |
-| `tinypipewire-backend` | PipeWire, natively | Linux |
+| `pipewire-flow-backend` | PipeWire, natively, through `pipewire-flow` | Linux |
 
 On Linux `cpal` already arrives at PipeWire through the ALSA
 compatibility layer. The native backend is for when that indirection is
@@ -85,19 +85,19 @@ in the way: devices are named and numbered by the PipeWire graph, and
 buffers are negotiated with it directly.
 
 Exactly one is normally on. `EdgeEar::new()` takes cpal where it is
-compiled in and tinypipewire otherwise, so nothing above the trait
+compiled in and pipewire-flow otherwise, so nothing above the trait
 changes:
 
 ```bash
 cargo build -p edge-ear-core --no-default-features \
-  --features tinypipewire-backend
+  --features pipewire-flow-backend
 ```
 
 ## Building
 
 ```bash
 sudo apt install libasound2-dev libssl-dev pkg-config   # Linux; macOS needs nothing
-sudo apt install libpipewire-0.3-dev                    # only for tinypipewire-backend
+sudo apt install libpipewire-0.3-dev                    # only for pipewire-flow-backend
 cargo build --workspace
 cargo test --workspace
 ```
@@ -130,7 +130,7 @@ cd py && maturin develop
 
 # or against PipeWire
 cd py && maturin develop \
-  --no-default-features --features tinypipewire-backend
+  --no-default-features --features pipewire-flow-backend
 ```
 
 ```python
