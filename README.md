@@ -123,6 +123,38 @@ Try it out loud:
 cargo run --example listen -- 30
 ```
 
+## C
+
+[cargo-c](https://github.com/lu-zero/cargo-c) builds and installs the C
+library the way a distribution would: `libedge-ear` as a shared library
+with a versioned soname and as a static one, the header as
+`edge-ear/edge_ear.h`, and `edge-ear.pc` for pkg-config.
+
+```bash
+cargo install cargo-c
+cargo cinstall --release -p edge-ear-capi --prefix=/usr/local
+# a staged install for packaging instead:
+cargo cinstall --release -p edge-ear-capi --prefix=/usr --destdir=/tmp/stage
+```
+
+A C project then needs nothing but pkg-config. The static form also pulls
+in the system libraries the library itself links, such as ALSA on Linux:
+
+```bash
+cc app.c $(pkg-config --cflags --libs edge-ear)
+cc app.c $(pkg-config --cflags edge-ear) /usr/local/lib/libedge-ear.a \
+  $(pkg-config --libs --static edge-ear | sed 's/-ledge-ear//')
+```
+
+On macOS the static form also needs clang's runtime, which onnxruntime
+uses and the `.pc` file cannot locate:
+`-L$(clang -print-resource-dir)/lib/darwin`.
+
+The features choose what goes in, as with cargo, for instance
+`--no-default-features --features pipewire-flow-backend`. A plain
+`cargo build -p edge-ear-capi` still leaves `libedge_ear_capi` in
+`target/`, which is what the tests link.
+
 ## Python
 
 ```bash

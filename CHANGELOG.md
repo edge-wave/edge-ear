@@ -9,6 +9,12 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 
 ### Added
 
+- The C library installs with cargo-c. `cargo cinstall -p edge-ear-capi`
+  puts `libedge-ear` in place as a shared library with a versioned
+  soname (`libedge-ear.so.0.6` on Linux) and as a static one, with the
+  header under `edge-ear/` and `edge-ear.pc`, whose private libraries
+  carry what the static form needs. A plain `cargo build` still makes
+  `libedge_ear_capi`, as before.
 - `OutputStream::heard_at` says when a sample handed to a speaker comes
   out of it, and `backend::playout::Playout` keeps that account for a
   device callback. The method has a default, so a backend written
