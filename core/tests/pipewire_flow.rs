@@ -1,23 +1,23 @@
-//! Integration tests for the tinypipewire audio backend.
+//! Integration tests for the pipewire-flow audio backend.
 
-#![cfg(all(feature = "tinypipewire-backend", target_os = "linux"))]
+#![cfg(all(feature = "pipewire-flow-backend", target_os = "linux"))]
 
 use std::time::Duration;
 
 use edge_ear_core::EdgeEar;
 use edge_ear_core::backend::AudioBackend;
-use edge_ear_core::backend::tinypipewire_backend::TinypipewireBackend;
+use edge_ear_core::backend::pipewire_flow_backend::PipewireFlowBackend;
 use edge_ear_core::config::{AudioFormat, SampleType, Target};
 
 #[test]
-fn tinypipewire_backend_creation_and_description() {
-    let backend = TinypipewireBackend::new().expect("create backend");
-    assert_eq!(backend.describe(), "tinypipewire");
+fn pipewire_flow_backend_creation_and_description() {
+    let backend = PipewireFlowBackend::new().expect("create backend");
+    assert_eq!(backend.describe(), "pipewire-flow");
 }
 
 #[test]
-fn tinypipewire_backend_reports_supported_formats() {
-    let backend = TinypipewireBackend::new().expect("create backend");
+fn pipewire_flow_backend_reports_supported_formats() {
+    let backend = PipewireFlowBackend::new().expect("create backend");
     let formats = backend.input_formats(None).expect("input formats");
     assert!(!formats.is_empty(), "expected offered formats");
 
@@ -35,15 +35,15 @@ fn tinypipewire_backend_reports_supported_formats() {
 }
 
 #[test]
-fn edge_ear_with_tinypipewire_constructor() {
-    let ear = EdgeEar::with_tinypipewire().expect("build EdgeEar with tinypipewire");
+fn edge_ear_with_pipewire_flow_constructor() {
+    let ear = EdgeEar::with_pipewire_flow().expect("build EdgeEar with pipewire-flow");
     assert!(!ear.is_running());
 }
 
 #[test]
 #[ignore = "needs a running PipeWire daemon"]
-fn the_tinypipewire_backend_lists_devices_and_captures() {
-    let ear = EdgeEar::with_tinypipewire().expect("handle over tinypipewire");
+fn the_pipewire_flow_backend_lists_devices_and_captures() {
+    let ear = EdgeEar::with_pipewire_flow().expect("handle over pipewire-flow");
     let devices = ear.input_devices().expect("input devices");
     println!("PipeWire input targets: {devices:?}");
 
@@ -62,10 +62,10 @@ fn the_tinypipewire_backend_lists_devices_and_captures() {
 
 #[test]
 #[ignore = "needs a running PipeWire daemon"]
-fn the_tinypipewire_backend_plays_audio() {
+fn the_pipewire_flow_backend_plays_audio() {
     use edge_ear_core::{Samples, SoundSource};
 
-    let ear = EdgeEar::with_tinypipewire().expect("handle over tinypipewire");
+    let ear = EdgeEar::with_pipewire_flow().expect("handle over pipewire-flow");
     let pcm = SoundSource::Pcm {
         data: Samples::I16(vec![1000; 16_000]),
         sample_rate: 16_000,
@@ -89,7 +89,7 @@ fn the_tinypipewire_backend_plays_audio() {
 fn an_idle_speaker_is_released_and_taken_again() {
     use edge_ear_core::{Samples, SoundSource};
 
-    let ear = EdgeEar::with_tinypipewire().expect("handle over tinypipewire");
+    let ear = EdgeEar::with_pipewire_flow().expect("handle over pipewire-flow");
     // Silence, so running this says nothing out loud.
     let quiet = SoundSource::Pcm {
         data: Samples::I16(vec![0; 16_000]),

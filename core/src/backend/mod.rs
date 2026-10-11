@@ -4,9 +4,9 @@ pub mod cpal_backend;
 /// against this library needs a microphone giving known audio on
 /// demand. It touches no hardware and reaches nothing outside.
 pub mod fake;
+#[cfg(all(feature = "pipewire-flow-backend", target_os = "linux"))]
+pub mod pipewire_flow_backend;
 pub mod playout;
-#[cfg(all(feature = "tinypipewire-backend", target_os = "linux"))]
-pub mod tinypipewire_backend;
 
 use std::time::Instant;
 

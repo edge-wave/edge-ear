@@ -1,4 +1,4 @@
-//! The PipeWire audio backend using tinypipewire-rs.
+//! The PipeWire audio backend using pipewire-flow-rs.
 //!
 //! Audio capture and playback are bridged between PipeWire's real-time thread loop
 //! and edge-ear's ring queues so neither waits on the other.
@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tinypipewire::{AudioConfig, Routing, SampleFormat, Stream};
+use pipewire_flow::{AudioConfig, Routing, SampleFormat, Stream};
 
 use super::playout::{Playout, fade_out, guessed_ahead};
 use super::{AudioBackend, DeviceInfo, FormatRequest, InputStream, OutputStream, SupportedFormat};
@@ -21,11 +21,11 @@ use crate::error::{Error, Result};
 /// has stalled, and dropping is better than growing.
 const DEVICE_QUEUE_BLOCKS: usize = 32;
 
-/// An audio backend backed by PipeWire through `tinypipewire-rs`.
-pub struct TinypipewireBackend {}
+/// An audio backend backed by PipeWire through `pipewire-flow-rs`.
+pub struct PipewireFlowBackend {}
 
-impl TinypipewireBackend {
-    /// Creates a new `TinypipewireBackend`.
+impl PipewireFlowBackend {
+    /// Creates a new `PipewireFlowBackend`.
     pub fn new() -> Result<Self> {
         Ok(Self {})
     }
@@ -48,9 +48,9 @@ impl TinypipewireBackend {
     }
 }
 
-impl Default for TinypipewireBackend {
+impl Default for PipewireFlowBackend {
     fn default() -> Self {
-        Self::new().expect("tinypipewire backend creation")
+        Self::new().expect("pipewire-flow backend creation")
     }
 }
 
@@ -84,23 +84,26 @@ fn supported_formats() -> Vec<SupportedFormat> {
     ]
 }
 
-/// Maps a `tinypipewire::Error` into an `edge_ear::error::Error`.
-pub(crate) fn map_tinypipewire_error(device: Device, err: tinypipewire::Error) -> Error {
+/// Maps a `pipewire_flow::Error` into an `edge_ear::error::Error`.
+pub(crate) fn map_pipewire_flow_error(device: Device, err: pipewire_flow::Error) -> Error {
     match err {
-        tinypipewire::Error::ConnectFailed => Error::Backend {
+        pipewire_flow::Error::ConnectFailed => Error::Backend {
             device,
             reason: "failed to connect to PipeWire daemon".to_string(),
         },
-        tinypipewire::Error::SourceUnavailable => Error::NoDevice(device),
-        tinypipewire::Error::InvalidArgument => Error::Backend {
+        // A target naming no node is a device that is not there.
+        pipewire_flow::Error::SourceUnavailable | pipewire_flow::Error::NotFound => {
+            Error::NoDevice(device)
+        }
+        pipewire_flow::Error::InvalidArgument => Error::Backend {
             device,
             reason: "invalid argument for PipeWire stream".to_string(),
         },
-        tinypipewire::Error::InvalidFormat => Error::Backend {
+        pipewire_flow::Error::InvalidFormat => Error::Backend {
             device,
             reason: "unsupported audio format for PipeWire stream".to_string(),
         },
-        tinypipewire::Error::CreateFailed => Error::Backend {
+        pipewire_flow::Error::CreateFailed => Error::Backend {
             device,
             reason: "failed to create PipeWire stream".to_string(),
         },
@@ -139,11 +142,11 @@ fn list_devices(is_input: bool) -> Result<Vec<DeviceInfo>> {
     } else {
         Stream::playback(|_| {})
     }
-    .map_err(|e| map_tinypipewire_error(device, e))?;
+    .map_err(|e| map_pipewire_flow_error(device, e))?;
 
     let targets = stream
         .targets()
-        .map_err(|e| map_tinypipewire_error(device, e))?;
+        .map_err(|e| map_pipewire_flow_error(device, e))?;
 
     let mut devices = Vec::with_capacity(targets.len());
     for (i, t) in targets.into_iter().enumerate() {
@@ -162,7 +165,7 @@ fn list_devices(is_input: bool) -> Result<Vec<DeviceInfo>> {
             name,
             // TODO: PipeWire lists targets in no particular order, so this can
             // flag the wrong device. Use the session's default.audio.{source,sink}
-            // once tinypipewire exposes it.
+            // once pipewire-flow exposes it.
             is_default: i == 0,
         });
     }
@@ -294,14 +297,14 @@ fn until(pts: i64) -> Option<Duration> {
 }
 
 /// An open PipeWire input stream.
-pub struct TinypipewireInput {
+pub struct PipewireFlowInput {
     queue: Arc<Ring<Samples>>,
     losses: LossReport,
     format: AudioFormat,
     stream: Option<Stream>,
 }
 
-impl InputStream for TinypipewireInput {
+impl InputStream for PipewireFlowInput {
     fn format(&self) -> AudioFormat {
         self.format
     }
@@ -324,21 +327,21 @@ impl InputStream for TinypipewireInput {
     }
 }
 
-impl Drop for TinypipewireInput {
+impl Drop for PipewireFlowInput {
     fn drop(&mut self) {
         let _ = self.stop();
     }
 }
 
 /// An open PipeWire output stream.
-pub struct TinypipewireOutput {
+pub struct PipewireFlowOutput {
     queue: Arc<Ring<Samples>>,
     playout: Arc<Playout>,
     format: AudioFormat,
     stream: Option<Stream>,
 }
 
-impl OutputStream for TinypipewireOutput {
+impl OutputStream for PipewireFlowOutput {
     fn format(&self) -> AudioFormat {
         self.format
     }
@@ -369,13 +372,13 @@ impl OutputStream for TinypipewireOutput {
     }
 }
 
-impl Drop for TinypipewireOutput {
+impl Drop for PipewireFlowOutput {
     fn drop(&mut self) {
         let _ = self.stop();
     }
 }
 
-impl AudioBackend for TinypipewireBackend {
+impl AudioBackend for PipewireFlowBackend {
     fn open_input(&mut self, req: &FormatRequest) -> Result<Box<dyn InputStream>> {
         let target = self.pick_device(true, req.device.as_deref())?;
         let format = req.wanted.unwrap_or(AudioFormat::mono_16k());
@@ -400,7 +403,7 @@ impl AudioBackend for TinypipewireBackend {
                 feed.push(bytes_to_samples(bytes, sample_type));
             }
         })
-        .map_err(|e| map_tinypipewire_error(Device::Input, e))?;
+        .map_err(|e| map_pipewire_flow_error(Device::Input, e))?;
 
         // This runs when the source is lost rather than per block, so
         // logging is safe. Losing the report is not worth failing over.
@@ -413,22 +416,22 @@ impl AudioBackend for TinypipewireBackend {
         if let Some(ref target) = target {
             stream
                 .set_routing(Routing::Autoconnect(Some(target)))
-                .map_err(|e| map_tinypipewire_error(Device::Input, e))?;
+                .map_err(|e| map_pipewire_flow_error(Device::Input, e))?;
         } else {
             stream
                 .set_routing(Routing::Autoconnect(None))
-                .map_err(|e| map_tinypipewire_error(Device::Input, e))?;
+                .map_err(|e| map_pipewire_flow_error(Device::Input, e))?;
         }
 
         stream
             .set_audio_config(&audio_cfg)
-            .map_err(|e| map_tinypipewire_error(Device::Input, e))?;
+            .map_err(|e| map_pipewire_flow_error(Device::Input, e))?;
 
         stream
             .start()
-            .map_err(|e| map_tinypipewire_error(Device::Input, e))?;
+            .map_err(|e| map_pipewire_flow_error(Device::Input, e))?;
 
-        Ok(Box::new(TinypipewireInput {
+        Ok(Box::new(PipewireFlowInput {
             queue,
             losses: LossReport::new("capture from the microphone"),
             format,
@@ -466,7 +469,7 @@ impl AudioBackend for TinypipewireBackend {
                 .unwrap_or_else(|| guessed_ahead(avail / sample_bytes(format.sample_type), format));
             heard.took(real, ahead);
         })
-        .map_err(|e| map_tinypipewire_error(Device::Output, e))?;
+        .map_err(|e| map_pipewire_flow_error(Device::Output, e))?;
 
         // This runs when the sink is lost rather than per block, so
         // logging is safe. Losing the report is not worth failing over.
@@ -478,22 +481,22 @@ impl AudioBackend for TinypipewireBackend {
         if let Some(ref target) = target {
             stream
                 .set_routing(Routing::Autoconnect(Some(target)))
-                .map_err(|e| map_tinypipewire_error(Device::Output, e))?;
+                .map_err(|e| map_pipewire_flow_error(Device::Output, e))?;
         } else {
             stream
                 .set_routing(Routing::Autoconnect(None))
-                .map_err(|e| map_tinypipewire_error(Device::Output, e))?;
+                .map_err(|e| map_pipewire_flow_error(Device::Output, e))?;
         }
 
         stream
             .set_audio_config(&audio_cfg)
-            .map_err(|e| map_tinypipewire_error(Device::Output, e))?;
+            .map_err(|e| map_pipewire_flow_error(Device::Output, e))?;
 
         stream
             .start()
-            .map_err(|e| map_tinypipewire_error(Device::Output, e))?;
+            .map_err(|e| map_pipewire_flow_error(Device::Output, e))?;
 
-        Ok(Box::new(TinypipewireOutput {
+        Ok(Box::new(PipewireFlowOutput {
             queue,
             playout,
             format,
@@ -520,7 +523,7 @@ impl AudioBackend for TinypipewireBackend {
     }
 
     fn describe(&self) -> &'static str {
-        "tinypipewire"
+        "pipewire-flow"
     }
 }
 
@@ -659,7 +662,7 @@ mod tests {
 
     #[test]
     fn error_mapping_translates_correctly() {
-        let err = map_tinypipewire_error(Device::Input, tinypipewire::Error::ConnectFailed);
+        let err = map_pipewire_flow_error(Device::Input, pipewire_flow::Error::ConnectFailed);
         assert!(matches!(
             err,
             Error::Backend {
@@ -668,10 +671,10 @@ mod tests {
             }
         ));
 
-        let err = map_tinypipewire_error(Device::Output, tinypipewire::Error::SourceUnavailable);
+        let err = map_pipewire_flow_error(Device::Output, pipewire_flow::Error::SourceUnavailable);
         assert!(matches!(err, Error::NoDevice(Device::Output)));
 
-        let err = map_tinypipewire_error(Device::Input, tinypipewire::Error::InvalidArgument);
+        let err = map_pipewire_flow_error(Device::Input, pipewire_flow::Error::InvalidArgument);
         assert!(matches!(
             err,
             Error::Backend {
@@ -716,8 +719,8 @@ mod tests {
     }
 
     #[test]
-    fn backend_description_is_tinypipewire() {
-        let backend = TinypipewireBackend::new().unwrap();
-        assert_eq!(backend.describe(), "tinypipewire");
+    fn backend_description_is_pipewire_flow() {
+        let backend = PipewireFlowBackend::new().unwrap();
+        assert_eq!(backend.describe(), "pipewire-flow");
     }
 }
