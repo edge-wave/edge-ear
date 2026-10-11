@@ -63,6 +63,30 @@ jobs:
           cargo test -p edge-ear-capi --test c_surface -- --ignored --exact \
             everything_written_in_c_still_links
 
+      # cargo-c installs the library as a distribution would, so a C project
+      # must build against it through edge-ear.pc alone, shared and static.
+      - name: The installed C library links through pkg-config
+        shell: bash
+        run: |
+          release=https://github.com/lu-zero/cargo-c/releases/download/v0.10.26
+          if [ "$RUNNER_OS" = Linux ]; then
+            curl -sSfL "$release/cargo-c-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C ~/.cargo/bin
+            rtlib=""
+          else
+            curl -sSfL -o "$RUNNER_TEMP/cargo-c.zip" "$release/cargo-c-macos.zip"
+            unzip -o -q "$RUNNER_TEMP/cargo-c.zip" -d ~/.cargo/bin
+            command -v pkg-config || brew install pkgconf
+            # onnxruntime needs clang's runtime, whose directory the .pc cannot name.
+            rtlib="-L$(clang -print-resource-dir)/lib/darwin"
+          fi
+          stage="$RUNNER_TEMP/stage"
+          cargo cinstall --locked --release -p edge-ear-capi --prefix=/usr/local --destdir="$stage"
+          pc=$(find "$stage" -name edge-ear.pc)
+          export PKG_CONFIG_PATH=$(dirname "$pc") PKG_CONFIG_SYSROOT_DIR="$stage"
+          cc capi/examples/listen.c $(pkg-config --cflags --libs edge-ear) -o "$RUNNER_TEMP/listen-shared"
+          cc capi/examples/listen.c $(pkg-config --cflags edge-ear) "$(find "$stage" -name libedge-ear.a)" \
+            $rtlib $(pkg-config --libs --static edge-ear | sed 's/-ledge-ear//') -o "$RUNNER_TEMP/listen-static"
+
       - name: The committed header matches the source
         if: runner.os == 'Linux'
         run: |
