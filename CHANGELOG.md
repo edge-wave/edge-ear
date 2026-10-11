@@ -29,7 +29,7 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 - `OutputStream::tap` copies everything a speaker plays, silence
   included, for the echo canceller. It has a default that declines, so
   a backend written outside this library still builds and leaves its
-  echo in. cpal, tinypipewire and the fake backend all tap.
+  echo in. cpal, pipewire-flow and the fake backend all tap.
 - `FakeSetup::echo_gain` lets the fake microphone hear the fake speaker
   back, so echo cancellation can be tested without hardware.
 - `OutputStream::heard_at` says when a sample handed to a speaker comes
