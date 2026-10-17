@@ -34,6 +34,10 @@ libc = "0.2"
 # change behaviour, so a caret range could break the build silently.
 ort = "=2.0.0-rc.13"
 
+# Bundled, because the packaged libraries lag the 2.x API this wraps.
+# Building it needs meson, ninja and a C++ compiler.
+webrtc-audio-processing = { version = "2.1.0", features = ["bundled"] }
+
 pyo3 = "0.29.2"
 pyo3-build-config = "0.29.2"
 pyo3-log = "0.13.4"
