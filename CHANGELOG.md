@@ -5,13 +5,13 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 0.y release may break the public API.
 
-## [Unreleased]
+## [0.7.0]
 
 ### Added
 
 - The C library installs with cargo-c. `cargo cinstall -p edge-ear-capi`
   puts `libedge-ear` in place as a shared library with a versioned
-  soname (`libedge-ear.so.0.6` on Linux) and as a static one, with the
+  soname (`libedge-ear.so.0.7` on Linux) and as a static one, with the
   header under `edge-ear/` and `edge-ear.pc`, whose private libraries
   carry what the static form needs. A plain `cargo build` still makes
   `libedge_ear_capi`, as before.
