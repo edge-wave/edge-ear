@@ -5,6 +5,29 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versioning follows [SemVer](https://semver.org/); before 1.0.0, any
 0.y release may break the public API.
 
+## [Unreleased]
+
+### Added
+
+- Live audio and wake detections share one capture timeline, so an
+  application reading audio can find where the wake word was said.
+  `AudioChunk::position` says where a chunk starts, counted from the
+  start of capture, and `WakeDetected` carries `position`, where the
+  frame that decided it ends. `SpeechEnded` carries `position` too, where
+  its first sample sits, pre-roll included. Python has `position_ns` on
+  `AudioChunk`, `WakeDetected` and `SpeechEnded`, and C has
+  `edge_ear_event::position_ns`.
+
+### Changed
+
+- **Breaking:** `edge_ear_read` takes a sixth argument, `position_ns`,
+  which receives the chunk's place on the timeline and may be NULL.
+  `edge_ear_event` gains `position_ns` at its end, and in Rust
+  `AudioChunk::new` takes the position, and `WakeDetected` and
+  `SpeechEnded` each have a new field.
+- The resampler's leading delay is dropped rather than handed on, so a
+  resampled format no longer starts a few milliseconds late.
+
 ## [0.7.0]
 
 ### Added

@@ -393,6 +393,11 @@ typedef struct {
      * Wake detected: the name the word heard was added under.
      */
     const char *word;
+    /**
+     * Wake detected: where the deciding frame ends. Speech ended: where
+     * the first sample of `audio` sits. Nanoseconds on the `edge_ear_read` timeline.
+     */
+    uint64_t position_ns;
 } edge_ear_event;
 
 /**
@@ -540,14 +545,17 @@ int32_t edge_ear_is_running(edge_ear_h ear);
  * @param[in]  timeout_ms how long to wait; below zero waits until
  *             audio arrives or capture stops
  * @param[out] got how many samples were written
+ * @param[out] position_ns where the first sample sits on the capture
+ *             timeline, in nanoseconds since capture started; may be NULL
  * @return #EDGE_EAR_OK, or a negative #edge_ear_error.
- * @see edge_ear_set_format
+ * @see edge_ear_set_format, edge_ear_event::position_ns
  */
 int32_t edge_ear_read(edge_ear_h ear,
                       int16_t *buf,
                       uintptr_t cap,
                       int32_t timeout_ms,
-                      uintptr_t *got);
+                      uintptr_t *got,
+                      uint64_t *position_ns);
 
 /**
  * @brief Set the handler called for every notification.

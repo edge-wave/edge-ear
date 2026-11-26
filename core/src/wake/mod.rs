@@ -262,8 +262,15 @@ fn run<M: WakeSource>(mut detector: Detector<M>, l: Listening) {
                     let score = answer.as_ref().and_then(|a| a.get(index)).copied();
                     let score = score.unwrap_or(0.0);
                     let word = words.get(index).cloned().unwrap_or_default();
-                    log::info!("heard the wake word {word:?}, score {score:.3}");
-                    dispatcher.emit(Event::WakeDetected { word, score });
+                    // The end of the frame that tipped it, on the same
+                    // timeline as read, so the word can be found there.
+                    let position = chunk.end();
+                    log::info!("heard the wake word {word:?}, score {score:.3}, at {position:?}");
+                    dispatcher.emit(Event::WakeDetected {
+                        word,
+                        score,
+                        position,
+                    });
                 }
             }
             Err(e) => {
@@ -328,6 +335,7 @@ mod tests {
             Samples::I16(vec![100; FRAME]),
             AudioFormat::mono_16k(),
             Instant::now(),
+            Duration::ZERO,
         )
     }
 

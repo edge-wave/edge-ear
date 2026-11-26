@@ -24,7 +24,8 @@ static void on_event(const edge_ear_event *event, void *user)
     (void)user;
     switch (event->kind) {
     case EDGE_EAR_EVENT_WAKE_DETECTED:
-        printf("heard %s (%.2f)\n", event->word, event->score);
+        printf("heard %s (%.2f) at %.3f s\n", event->word, event->score,
+               (double)event->position_ns / 1e9);
         break;
     case EDGE_EAR_EVENT_SPEECH_ENDED:
         printf("recording of %zu samples ended, reason %d\n",
@@ -79,7 +80,7 @@ int main(int argc, char **argv)
     int16_t buf[16000];
     for (int block = 0; block < 20; block++) {
         size_t got = 0;
-        rc = edge_ear_read(ear, buf, sizeof buf / sizeof buf[0], 2000, &got);
+        rc = edge_ear_read(ear, buf, sizeof buf / sizeof buf[0], 2000, &got, NULL);
         if (rc != EDGE_EAR_OK) {
             fprintf(stderr, "read failed: %s\n", edge_ear_get_last_error());
             break;

@@ -38,6 +38,11 @@ pub fn out_ptr<T>(ptr: *mut T, what: &str) -> Result<&'static mut T, i32> {
     Ok(unsafe { &mut *ptr })
 }
 
+/// A timeline position as C sees it. It would take centuries to overflow.
+pub fn nanos(position: std::time::Duration) -> u64 {
+    u64::try_from(position.as_nanos()).unwrap_or(u64::MAX)
+}
+
 /// Seconds from C, refused if they could not be a duration.
 pub fn duration(seconds: f64, what: &str) -> Result<std::time::Duration, i32> {
     if !seconds.is_finite() || seconds < 0.0 {

@@ -51,12 +51,21 @@ impl std::fmt::Display for EndReason {
 pub enum Event {
     /// One of the wake words was heard. `word` is the name it was
     /// added under, and `score` how sure the detector was of it.
-    WakeDetected { word: String, score: f32 },
+    /// `position` is where the deciding frame ends, on the timeline that
+    /// [`AudioChunk::position`](crate::AudioChunk) uses.
+    WakeDetected {
+        word: String,
+        score: f32,
+        position: Duration,
+    },
+    /// A recording ended. `position` is where the first sample of
+    /// `audio`, pre-roll included, sits on the capture timeline.
     SpeechEnded {
         audio: Vec<i16>,
         sample_rate: u32,
         reason: EndReason,
         duration: Duration,
+        position: Duration,
     },
     /// A sound reached its own end and its last audible sample has been heard
     /// from the speaker. One that was stopped is not reported.

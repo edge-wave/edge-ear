@@ -63,19 +63,33 @@ pub struct AudioChunk {
     /// When the device produced this, not when it was read. A slow
     /// consumer still sees correct timing.
     pub captured_at: Instant,
+    /// Where the first sample sits on the capture timeline, counted
+    /// from the start of capture. Every consumer shares this timeline.
+    pub position: Duration,
     /// Chunks this consumer lost before this one. Above zero only after
     /// it fell behind.
     pub dropped_before: u64,
 }
 
 impl AudioChunk {
-    pub fn new(samples: Samples, format: AudioFormat, captured_at: Instant) -> Self {
+    pub fn new(
+        samples: Samples,
+        format: AudioFormat,
+        captured_at: Instant,
+        position: Duration,
+    ) -> Self {
         Self {
             samples,
             format,
             captured_at,
+            position,
             dropped_before: 0,
         }
+    }
+
+    /// Where the last sample ends on the capture timeline.
+    pub fn end(&self) -> Duration {
+        self.position + self.duration()
     }
 
     /// How long this chunk covers.
@@ -270,6 +284,10 @@ fn run(
         })
         .collect();
 
+    // Samples each converter has produced since capture began. They
+    // place every chunk on the timeline, whether its consumer is on or not.
+    let mut produced: Vec<u64> = vec![0; converters.len()];
+
     let mut accumulators: Vec<FrameAccumulator> = consumers
         .iter()
         .map(|c| FrameAccumulator::new(c.frame_samples))
@@ -315,6 +333,11 @@ fn run(
                 }
             }
         }
+        for (slot, samples) in converted.iter().enumerate() {
+            if let Some(samples) = samples {
+                produced[slot] += samples.len() as u64;
+            }
+        }
         if converting_failed && !failed_now {
             log::info!("captured audio converts again");
         }
@@ -327,13 +350,24 @@ fn run(
                 accumulators[index].clear();
                 continue;
             }
-            let Some(samples) = converted[slot_of[index]].as_ref() else {
+            let slot = slot_of[index];
+            let Some(samples) = converted[slot].as_ref() else {
                 continue;
             };
+            // Frames leave the accumulator in order, starting with the
+            // samples it was already holding.
+            let before = produced[slot] - samples.len() as u64;
+            let mut start = before - accumulators[index].held() as u64;
             for frame in accumulators[index].push(samples.clone()) {
-                consumer
-                    .ring
-                    .push(AudioChunk::new(frame, consumer.format, captured_at));
+                let len = frame.len() as u64;
+                let position = timeline(start, consumer.format);
+                consumer.ring.push(AudioChunk::new(
+                    frame,
+                    consumer.format,
+                    captured_at,
+                    position,
+                ));
+                start += len;
             }
         }
     }
@@ -345,9 +379,123 @@ fn run(
     log::debug!("capture thread finished");
 }
 
+/// The time of one sample on the capture timeline.
+fn timeline(sample: u64, format: AudioFormat) -> Duration {
+    let frame = sample / format.channels.max(1) as u64;
+    let nanos = frame as u128 * 1_000_000_000 / format.sample_rate.max(1) as u128;
+    Duration::from_nanos(nanos as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_timeline_counts_frames_at_the_format_rate() {
+        let stereo = AudioFormat::new(16_000, 2, SampleType::I16);
+        assert_eq!(timeline(3_200, stereo), Duration::from_millis(100));
+        assert_eq!(
+            timeline(1, AudioFormat::mono_16k()),
+            Duration::from_nanos(62_500)
+        );
+    }
+
+    /// Hands over canned blocks, then says the stream has ended.
+    struct Canned {
+        blocks: std::collections::VecDeque<Samples>,
+        format: AudioFormat,
+    }
+
+    impl InputStream for Canned {
+        fn format(&self) -> AudioFormat {
+            self.format
+        }
+        fn read(&mut self) -> Result<Samples> {
+            self.blocks.pop_front().ok_or(Error::Stopped)
+        }
+        fn stop(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn drain(ring: &Ring<AudioChunk>) -> Vec<AudioChunk> {
+        std::iter::from_fn(|| ring.take(Some(Duration::from_secs(5))).ok().map(|t| t.item))
+            .collect()
+    }
+
+    /// Where the audio first turns loud, on the capture timeline.
+    fn onset(chunks: &[AudioChunk]) -> Duration {
+        for chunk in chunks {
+            let samples = chunk.samples.as_i16().unwrap();
+            if let Some(i) = samples.iter().position(|s| s.abs() > 4_000) {
+                let frames = (i / chunk.format.channels as usize) as u64;
+                return chunk.position
+                    + Duration::from_nanos(
+                        frames * 1_000_000_000 / chunk.format.sample_rate as u64,
+                    );
+            }
+        }
+        panic!("the audio never turned loud");
+    }
+
+    #[test]
+    fn every_consumer_places_the_same_sound_at_the_same_time() {
+        // One second at 48 kHz: quiet, then loud from 500 ms on.
+        let device = AudioFormat::new(48_000, 1, SampleType::I16);
+        let audio: Vec<i16> = (0..48_000)
+            .map(|i| if i < 24_000 { 0 } else { 8_000 })
+            .collect();
+        let blocks = audio
+            .chunks(480)
+            .map(|b| Samples::I16(b.to_vec()))
+            .collect();
+        let stream = Box::new(Canned {
+            blocks,
+            format: device,
+        });
+
+        let read = Consumer::new(
+            ConsumerKind::Read,
+            device,
+            None,
+            Duration::from_secs(5),
+            true,
+        );
+        let wake_format = AudioFormat::mono_16k();
+        let wake = Consumer::new(
+            ConsumerKind::Wake,
+            wake_format,
+            Some(1280),
+            Duration::from_secs(5),
+            true,
+        );
+        let dispatcher = Arc::new(Dispatcher::new(
+            crate::events::dispatch::DEFAULT_QUEUE_CAPACITY,
+        ));
+        let mut capture =
+            CaptureThread::start(stream, vec![read.clone(), wake.clone()], dispatcher).unwrap();
+
+        let read_chunks = drain(&read.ring);
+        let wake_chunks = drain(&wake.ring);
+        capture.stop();
+
+        for chunks in [&read_chunks, &wake_chunks] {
+            for pair in chunks.windows(2) {
+                let gap = pair[1].position.abs_diff(pair[0].end());
+                assert!(
+                    gap < Duration::from_micros(100),
+                    "chunks are not back to back: {gap:?}"
+                );
+            }
+        }
+        let heard = onset(&read_chunks);
+        assert_eq!(heard, Duration::from_millis(500));
+        let resampled = onset(&wake_chunks);
+        assert!(
+            heard.abs_diff(resampled) < Duration::from_millis(2),
+            "read hears it at {heard:?}, wake at {resampled:?}"
+        );
+    }
 
     #[test]
     fn duration_follows_the_format() {
@@ -355,14 +503,21 @@ mod tests {
             Samples::I16(vec![0; 1600]),
             AudioFormat::mono_16k(),
             Instant::now(),
+            Duration::from_millis(50),
         );
         assert_eq!(chunk.duration(), std::time::Duration::from_millis(100));
+        assert_eq!(chunk.end(), Duration::from_millis(150));
     }
 
     #[test]
     fn stereo_duration_counts_frames_not_samples() {
         let format = AudioFormat::new(16_000, 2, SampleType::I16);
-        let chunk = AudioChunk::new(Samples::I16(vec![0; 3200]), format, Instant::now());
+        let chunk = AudioChunk::new(
+            Samples::I16(vec![0; 3200]),
+            format,
+            Instant::now(),
+            Duration::ZERO,
+        );
         assert_eq!(chunk.duration(), std::time::Duration::from_millis(100));
     }
 }

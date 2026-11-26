@@ -106,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ear.on_event(move |event| {
         let at = started.elapsed().as_secs_f64();
         match event {
-            Event::WakeDetected { word, score } => {
+            Event::WakeDetected { word, score, .. } => {
                 println!("\r  [{at:>5.1}s] heard {word} ({score:.3}) — listening");
             }
             Event::SoundFinished { id } => {
@@ -117,6 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 reason,
                 duration,
                 sample_rate,
+                ..
             } => {
                 println!(
                     "\r  [{at:>5.1}s] speech ended: {reason} after {:.1}s, \
