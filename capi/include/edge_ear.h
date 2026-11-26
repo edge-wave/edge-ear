@@ -398,6 +398,11 @@ typedef struct {
      * the first sample of `audio` sits. Nanoseconds on the `edge_ear_read` timeline.
      */
     uint64_t position_ns;
+    /**
+     * Speech ended: where the last sample of `audio` ends, pre-roll
+     * counted, unlike `duration_secs`. Nanoseconds on the same timeline.
+     */
+    uint64_t end_ns;
 } edge_ear_event;
 
 /**

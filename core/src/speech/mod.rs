@@ -13,6 +13,10 @@ use crate::events::dispatch::Dispatcher;
 use crate::events::{EndReason, Event};
 use crate::speech::model::{SileroModel, SpeechModel};
 
+/// A jump on the timeline larger than this means audio was lost. It is
+/// well above rounding and well below any frame.
+const GAP_TOLERANCE: Duration = Duration::from_millis(1);
+
 /// Audio collected for one recording, and why it ended.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Recording {
@@ -117,6 +121,10 @@ impl<M: SpeechModel> Detector<M> {
         at: Duration,
         limits: &TunableConfig,
     ) -> Result<Option<Recording>> {
+        let gap = at.saturating_sub(self.end);
+        if gap > GAP_TOLERANCE {
+            self.bridge(gap, limits);
+        }
         self.end = at + self.frame_duration(frame.len());
         // Kept whether or not a recording is open. The point of
         // history is having it before anyone asks.
@@ -147,6 +155,18 @@ impl<M: SpeechModel> Detector<M> {
         }
 
         Ok(self.verdict(limits))
+    }
+
+    /// Audio went missing before this frame. History across the hole
+    /// would be misplaced, and an open recording is padded to stay on time.
+    fn bridge(&mut self, gap: Duration, limits: &TunableConfig) {
+        self.history.clear();
+        if self.open && self.start.is_some() {
+            let filled = gap.min(limits.max_recording.saturating_sub(self.elapsed));
+            let samples = self.samples_in(filled);
+            self.audio.resize(self.audio.len() + samples, 0);
+            self.elapsed += filled;
+        }
     }
 
     /// End the recording because the application said so.
@@ -420,6 +440,39 @@ mod tests {
         d.open(Duration::ZERO, true);
         d.push(&[100; FRAME], frame * 9, &l).unwrap();
         assert_eq!(d.stop().unwrap().position, frame * 9);
+    }
+
+    #[test]
+    fn lost_audio_is_kept_out_of_the_pre_roll() {
+        let mut d = detector(ScriptedModel::silent());
+        d.set_history_limit(Duration::from_millis(64));
+        let frame = Duration::from_millis(32);
+        let l = limits(3_000, 30_000, 10_000);
+        d.push(&[1; FRAME], Duration::ZERO, &l).unwrap();
+        // Nine frames lost, then one more arrives.
+        d.push(&[2; FRAME], frame * 10, &l).unwrap();
+        d.open(Duration::from_millis(64), true);
+        let done = d.stop().unwrap();
+        assert_eq!(
+            done.audio,
+            vec![2; FRAME],
+            "audio from before the hole was kept"
+        );
+        assert_eq!(done.position, frame * 10);
+    }
+
+    #[test]
+    fn a_hole_in_a_recording_is_filled_so_its_end_stays_on_time() {
+        let mut d = detector(ScriptedModel::silent());
+        let frame = Duration::from_millis(32);
+        let l = limits(3_000, 30_000, 10_000);
+        d.open(Duration::ZERO, true);
+        d.push(&[5; FRAME], Duration::ZERO, &l).unwrap();
+        d.push(&[5; FRAME], frame * 3, &l).unwrap();
+        let done = d.stop().unwrap();
+        assert_eq!(done.audio.len(), 4 * FRAME);
+        assert!(done.audio[FRAME..3 * FRAME].iter().all(|s| *s == 0));
+        assert_eq!(done.duration, frame * 4);
     }
 
     #[test]

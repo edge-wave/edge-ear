@@ -14,9 +14,10 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
   `AudioChunk::position` says where a chunk starts, counted from the
   start of capture, and `WakeDetected` carries `position`, where the
   frame that decided it ends. `SpeechEnded` carries `position` too, where
-  its first sample sits, pre-roll included. Python has `position_ns` on
-  `AudioChunk`, `WakeDetected` and `SpeechEnded`, and C has
-  `edge_ear_event::position_ns`.
+  its first sample sits, pre-roll included, and `Event::audio_end` says
+  where it ends; `duration` leaves the pre-roll out, so it cannot. Python
+  has `position_ns` on `AudioChunk`, `WakeDetected` and `SpeechEnded`, and
+  `SpeechEnded.end_ns`. C has `edge_ear_event::position_ns` and `end_ns`.
 
 ### Changed
 
@@ -25,6 +26,9 @@ versioning follows [SemVer](https://semver.org/); before 1.0.0, any
   `edge_ear_event` gains `position_ns` at its end, and in Rust
   `AudioChunk::new` takes the position, and `WakeDetected` and
   `SpeechEnded` each have a new field.
+- Audio lost before reaching speech detection, or skipped while it was
+  off, no longer joins the pre-roll as if it ran on. A hole inside a
+  recording is filled with silence, so its audio keeps to the timeline.
 - The resampler's leading delay is dropped rather than handed on, so a
   resampled format no longer starts a few milliseconds late.
 
