@@ -45,7 +45,7 @@ int main(void)
 
     int16_t buf[4096];
     size_t got = 0;
-    CHECK(edge_ear_read(ear, buf, 4096, 100, &got) == EDGE_EAR_NOT_RUNNING,
+    CHECK(edge_ear_read(ear, buf, 4096, 100, &got, NULL) == EDGE_EAR_NOT_RUNNING,
           "read before start");
     CHECK(edge_ear_start_recording(ear) == EDGE_EAR_NOT_RUNNING, "record before start");
     CHECK(edge_ear_enable_wake(ear, NULL) == EDGE_EAR_NO_WAKE_MODEL, "wake with no model");
@@ -68,8 +68,8 @@ int main(void)
     CHECK(edge_ear_get_wake_models(ear, &words, &word_count) == EDGE_EAR_OK, "list words");
     CHECK(word_count == 0, "no words yet");
     CHECK(edge_ear_play_sound(ear, NULL, 0) == EDGE_EAR_NULL_ARGUMENT, "null sound name");
-    CHECK(edge_ear_read(ear, NULL, 10, 0, &got) == EDGE_EAR_NULL_ARGUMENT, "null buffer");
-    CHECK(edge_ear_read(ear, buf, 10, 0, NULL) == EDGE_EAR_NULL_ARGUMENT, "null count");
+    CHECK(edge_ear_read(ear, NULL, 10, 0, &got, NULL) == EDGE_EAR_NULL_ARGUMENT, "null buffer");
+    CHECK(edge_ear_read(ear, buf, 10, 0, NULL, NULL) == EDGE_EAR_NULL_ARGUMENT, "null count");
 
     CHECK(edge_ear_set_wake_threshold(ear, 0.6f) == EDGE_EAR_OK, "wake threshold");
     CHECK(edge_ear_set_wake_threshold(ear, 5.0f) == EDGE_EAR_INVALID_VALUE,
@@ -174,11 +174,14 @@ int main(void)
                               EDGE_EAR_SAMPLE_TYPE_I16) != EDGE_EAR_OK,
           "format while running");
 
-    CHECK(edge_ear_read(ear, buf, 4096, 3000, &got) == EDGE_EAR_OK, "read");
+    uint64_t first_at = 0, next_at = 0;
+    CHECK(edge_ear_read(ear, buf, 4096, 3000, &got, &first_at) == EDGE_EAR_OK, "read");
     CHECK(got > 0, "audio arrived");
+    CHECK(edge_ear_read(ear, buf, 4096, 3000, &got, &next_at) == EDGE_EAR_OK, "read again");
+    CHECK(next_at > first_at, "the timeline moves forward");
 
     size_t tiny = 0;
-    CHECK(edge_ear_read(ear, buf, 1, 3000, &tiny) == EDGE_EAR_INVALID_VALUE,
+    CHECK(edge_ear_read(ear, buf, 1, 3000, &tiny, NULL) == EDGE_EAR_INVALID_VALUE,
           "buffer too small");
     CHECK(tiny == 0, "nothing written into a buffer too small");
 

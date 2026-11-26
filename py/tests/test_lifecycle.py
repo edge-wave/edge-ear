@@ -76,6 +76,8 @@ def test_audio_comes_back_as_bytes():
         assert chunk.sample_rate == 16000
         assert chunk.channels == 1
         assert chunk.dropped_before >= 0
+        later = ear.read(timeout=2.0)
+        assert later.position_ns > chunk.position_ns, "the timeline moves forward"
 
         # The bytes really are little-endian 16-bit samples.
         count = min(4, len(chunk))

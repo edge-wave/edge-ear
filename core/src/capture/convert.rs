@@ -23,6 +23,9 @@ pub struct Converter {
     out_max: usize,
     /// Mono f32 input waiting for a full resampler chunk.
     pending: Vec<f32>,
+    /// Leading output frames still to drop. They come from before the
+    /// first input, and keeping them would put every format out of step.
+    skip: usize,
 }
 
 impl Converter {
@@ -48,6 +51,7 @@ impl Converter {
         };
 
         let out_max = resampler.as_ref().map_or(0, |r| r.output_frames_max());
+        let skip = resampler.as_ref().map_or(0, |r| r.output_delay());
 
         Ok(Self {
             from,
@@ -55,6 +59,7 @@ impl Converter {
             resampler,
             out_max,
             pending: Vec::new(),
+            skip,
         })
     }
 
@@ -121,7 +126,9 @@ impl Converter {
                     reason: format!("resampling failed: {e}"),
                 })?;
 
-            out.extend_from_slice(&output_data[0][..produced]);
+            let dropped = self.skip.min(produced);
+            self.skip -= dropped;
+            out.extend_from_slice(&output_data[0][dropped..produced]);
         }
 
         Ok(out)
@@ -229,7 +236,6 @@ impl FrameAccumulator {
         out
     }
 
-    #[cfg(test)]
     /// Samples held back, waiting for a frame to fill.
     pub fn held(&self) -> usize {
         self.i16_buf.len() + self.f32_buf.len()

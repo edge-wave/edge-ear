@@ -82,6 +82,9 @@ pub struct edge_ear_event {
     pub dropped: u64,
     /// Wake detected: the name the word heard was added under.
     pub word: *const c_char,
+    /// Wake detected: where the deciding frame ends. Speech ended: where
+    /// the first sample of `audio` sits. Nanoseconds on the `edge_ear_read` timeline.
+    pub position_ns: u64,
 }
 
 /// Called for every notification. The event stops being valid when it
@@ -115,7 +118,11 @@ impl Registered {
         let mut word_name = None;
 
         let laid_out = match &event {
-            Event::WakeDetected { word, score } => {
+            Event::WakeDetected {
+                word,
+                score,
+                position,
+            } => {
                 let text = CString::new(word.as_str()).unwrap_or_default();
                 let ptr = text.as_ptr();
                 word_name = Some(text);
@@ -123,6 +130,7 @@ impl Registered {
                     kind: edge_ear_event_kind::EDGE_EAR_EVENT_WAKE_DETECTED,
                     score: *score,
                     word: ptr,
+                    position_ns: crate::convert::nanos(*position),
                     ..edge_ear_event::empty()
                 }
             }
@@ -131,6 +139,7 @@ impl Registered {
                 sample_rate,
                 reason,
                 duration,
+                position,
             } => edge_ear_event {
                 kind: edge_ear_event_kind::EDGE_EAR_EVENT_SPEECH_ENDED,
                 audio: audio.as_ptr(),
@@ -138,6 +147,7 @@ impl Registered {
                 sample_rate: *sample_rate,
                 reason: (*reason).into(),
                 duration_secs: duration.as_secs_f64(),
+                position_ns: crate::convert::nanos(*position),
                 ..edge_ear_event::empty()
             },
             Event::SoundFinished { id } => {
@@ -190,6 +200,7 @@ impl edge_ear_event {
             message: std::ptr::null(),
             dropped: 0,
             word: std::ptr::null(),
+            position_ns: 0,
         }
     }
 }

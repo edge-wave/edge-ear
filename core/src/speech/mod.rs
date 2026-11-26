@@ -20,6 +20,8 @@ pub struct Recording {
     pub reason: EndReason,
     pub duration: Duration,
     pub sample_rate: u32,
+    /// Where the first sample, pre-roll included, sits on the capture timeline.
+    pub position: Duration,
 }
 
 /// Tracks one recording from the moment it opens to the moment it ends.
@@ -40,6 +42,11 @@ pub struct Detector<M: SpeechModel> {
     /// Trimmed to what the largest allowed pre-roll could ask for.
     history: Vec<i16>,
     history_limit: usize,
+    /// Where the last frame pushed ends, on the capture timeline.
+    end: Duration,
+    /// Where the open recording starts. Unknown until a frame arrives
+    /// when it reaches back into no history.
+    start: Option<Duration>,
 }
 
 impl<M: SpeechModel> Detector<M> {
@@ -55,6 +62,8 @@ impl<M: SpeechModel> Detector<M> {
             open: false,
             history: Vec::new(),
             history_limit: 0,
+            end: Duration::ZERO,
+            start: None,
         }
     }
 
@@ -82,6 +91,7 @@ impl<M: SpeechModel> Detector<M> {
         self.model.reset();
         let wanted = self.samples_in(pre_roll).min(self.history.len());
         self.audio = self.history[self.history.len() - wanted..].to_vec();
+        self.start = (wanted > 0).then(|| self.end.saturating_sub(self.frame_duration(wanted)));
         self.counting = counting;
         self.speech_seen = false;
         self.silence_run = Duration::ZERO;
@@ -99,9 +109,15 @@ impl<M: SpeechModel> Detector<M> {
         self.open
     }
 
-    /// Feed one frame. Returns the finished recording when this frame
-    /// ended it.
-    pub fn push(&mut self, frame: &[i16], limits: &TunableConfig) -> Result<Option<Recording>> {
+    /// Feed one frame, which starts at `at` on the capture timeline.
+    /// Returns the finished recording when this frame ended it.
+    pub fn push(
+        &mut self,
+        frame: &[i16],
+        at: Duration,
+        limits: &TunableConfig,
+    ) -> Result<Option<Recording>> {
+        self.end = at + self.frame_duration(frame.len());
         // Kept whether or not a recording is open. The point of
         // history is having it before anyone asks.
         if self.history_limit > 0 {
@@ -115,6 +131,7 @@ impl<M: SpeechModel> Detector<M> {
             return Ok(None);
         }
 
+        self.start.get_or_insert(at);
         self.audio.extend_from_slice(frame);
         let frame_time = self.frame_duration(frame.len());
         self.elapsed += frame_time;
@@ -166,6 +183,7 @@ impl<M: SpeechModel> Detector<M> {
             reason,
             duration: self.elapsed,
             sample_rate: self.format.sample_rate,
+            position: self.start.take().unwrap_or(self.end),
         }
     }
 
@@ -199,7 +217,7 @@ mod tests {
     /// Feed frames until the recording ends, or give up.
     fn run(d: &mut Detector<ScriptedModel>, limits: &TunableConfig) -> Recording {
         for _ in 0..2000 {
-            if let Some(done) = d.push(&[100; FRAME], limits).unwrap() {
+            if let Some(done) = d.push(&[100; FRAME], Duration::ZERO, limits).unwrap() {
                 return done;
             }
         }
@@ -261,8 +279,12 @@ mod tests {
     fn the_application_can_end_it_itself() {
         let mut d = detector(ScriptedModel::always_speaking());
         d.open(Duration::ZERO, true);
-        d.push(&[100; FRAME], &limits(3_000, 30_000, 10_000))
-            .unwrap();
+        d.push(
+            &[100; FRAME],
+            Duration::ZERO,
+            &limits(3_000, 30_000, 10_000),
+        )
+        .unwrap();
 
         let done = d.stop().expect("a recording was open");
         assert_eq!(done.reason, EndReason::Stopped);
@@ -295,7 +317,8 @@ mod tests {
 
         // Heard before anyone asked for a recording.
         let earlier = [7i16; FRAME];
-        d.push(&earlier, &limits(320, 30_000, 10_000)).unwrap();
+        d.push(&earlier, Duration::ZERO, &limits(320, 30_000, 10_000))
+            .unwrap();
 
         d.open(Duration::from_millis(FRAME as u64 / 16), true);
         let done = run(&mut d, &limits(320, 30_000, 10_000));
@@ -309,7 +332,8 @@ mod tests {
     #[test]
     fn history_is_not_kept_when_no_recording_will_want_it() {
         let mut d = detector(ScriptedModel::always_speaking());
-        d.push(&[7; FRAME], &limits(320, 30_000, 10_000)).unwrap();
+        d.push(&[7; FRAME], Duration::ZERO, &limits(320, 30_000, 10_000))
+            .unwrap();
 
         d.open(Duration::from_millis(500), true);
         let done = run(&mut d, &limits(320, 30_000, 10_000));
@@ -324,7 +348,8 @@ mod tests {
         let mut d = detector(ScriptedModel::always_speaking());
         d.set_history_limit(Duration::from_millis(20));
         for _ in 0..10 {
-            d.push(&[7; FRAME], &limits(320, 30_000, 10_000)).unwrap();
+            d.push(&[7; FRAME], Duration::ZERO, &limits(320, 30_000, 10_000))
+                .unwrap();
         }
         assert_eq!(d.history.len(), 320, "history outgrew what was allowed");
     }
@@ -339,7 +364,7 @@ mod tests {
         // Far past every limit, but nothing is being counted yet.
         for _ in 0..50 {
             assert!(
-                d.push(&[100; FRAME], &l).unwrap().is_none(),
+                d.push(&[100; FRAME], Duration::ZERO, &l).unwrap().is_none(),
                 "nothing should end while the alert is still playing"
             );
         }
@@ -356,7 +381,8 @@ mod tests {
         let mut d = detector(ScriptedModel::silent());
         d.open(Duration::ZERO, false);
         for _ in 0..5 {
-            d.push(&[100; FRAME], &limits(320, 30_000, 10_000)).unwrap();
+            d.push(&[100; FRAME], Duration::ZERO, &limits(320, 30_000, 10_000))
+                .unwrap();
         }
         d.start_counting();
         let done = run(&mut d, &limits(320, 30_000, 320));
@@ -377,10 +403,30 @@ mod tests {
     }
 
     #[test]
+    fn a_recording_says_where_its_audio_starts() {
+        let mut d = detector(ScriptedModel::silent());
+        d.set_history_limit(Duration::from_millis(64));
+        let frame = Duration::from_millis(32);
+        let l = limits(3_000, 30_000, 10_000);
+        for n in 0..4 {
+            d.push(&[100; FRAME], frame * n, &l).unwrap();
+        }
+        // Two frames of pre-roll reach back from the end of the fourth.
+        d.open(Duration::from_millis(64), true);
+        d.push(&[100; FRAME], frame * 4, &l).unwrap();
+        assert_eq!(d.stop().unwrap().position, frame * 2);
+
+        // With none, it starts at the first frame it collects.
+        d.open(Duration::ZERO, true);
+        d.push(&[100; FRAME], frame * 9, &l).unwrap();
+        assert_eq!(d.stop().unwrap().position, frame * 9);
+    }
+
+    #[test]
     fn a_closed_detector_ignores_frames() {
         let mut d = detector(ScriptedModel::always_speaking());
         assert!(
-            d.push(&[100; FRAME], &limits(320, 30_000, 10_000))
+            d.push(&[100; FRAME], Duration::ZERO, &limits(320, 30_000, 10_000))
                 .unwrap()
                 .is_none()
         );
@@ -555,7 +601,7 @@ fn run(
         let Some(samples) = chunk.samples.as_i16() else {
             continue;
         };
-        let result = detector.push(samples, &limits);
+        let result = detector.push(samples, chunk.position, &limits);
         if failing && result.is_ok() {
             log::info!("speech detection works again");
             failing = false;
@@ -594,5 +640,6 @@ fn emit(dispatcher: &Dispatcher, done: Recording) {
         sample_rate: done.sample_rate,
         reason: done.reason,
         duration: done.duration,
+        position: done.position,
     });
 }

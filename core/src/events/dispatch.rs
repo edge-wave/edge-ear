@@ -217,6 +217,7 @@ mod tests {
         dispatcher.emit(Event::WakeDetected {
             word: "w".into(),
             score: 0.9,
+            position: Duration::ZERO,
         });
         dispatcher.emit(Event::SoundFinished {
             id: "alert".to_string(),
@@ -235,6 +236,7 @@ mod tests {
         dispatcher.emit(Event::WakeDetected {
             word: "w".into(),
             score: 0.9,
+            position: Duration::ZERO,
         });
         dispatcher.emit(Event::SoundFinished {
             id: "alert".to_string(),
@@ -270,6 +272,7 @@ mod tests {
             dispatcher.emit(Event::WakeDetected {
                 word: "w".into(),
                 score: 0.5,
+                position: Duration::ZERO,
             });
         }
         assert!(
@@ -287,6 +290,7 @@ mod tests {
             dispatcher.emit(Event::WakeDetected {
                 word: "w".into(),
                 score: 0.5,
+                position: Duration::ZERO,
             });
         }
         assert!(dispatcher.dropped() > 0);
@@ -317,11 +321,13 @@ mod tests {
         dispatcher.emit(Event::WakeDetected {
             word: "w".into(),
             score: 0.1,
+            position: Duration::ZERO,
         });
         assert!(wait_until(|| count.load(Ordering::SeqCst) == 1));
         dispatcher.emit(Event::WakeDetected {
             word: "w".into(),
             score: 0.2,
+            position: Duration::ZERO,
         });
         assert!(wait_until(|| count.load(Ordering::SeqCst) == 2));
     }
@@ -338,6 +344,7 @@ mod tests {
         dispatcher.emit(Event::WakeDetected {
             word: "w".into(),
             score: 0.5,
+            position: Duration::ZERO,
         });
         assert!(wait_until(|| lock(&dispatcher.worker).is_none()));
     }

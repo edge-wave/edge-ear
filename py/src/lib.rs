@@ -184,6 +184,10 @@ pub struct AudioChunk {
     /// it fell behind.
     #[pyo3(get)]
     dropped_before: u64,
+    /// Where the first sample sits on the capture timeline, in
+    /// nanoseconds since capture started.
+    #[pyo3(get)]
+    position_ns: u64,
 }
 
 #[pymethods]
@@ -205,12 +209,18 @@ impl AudioChunk {
 
     fn __repr__(&self) -> String {
         format!(
-            "AudioChunk({} samples, {} Hz, {} ch)",
+            "AudioChunk({} samples, {} Hz, {} ch, at {} ns)",
             self.samples.len(),
             self.sample_rate,
-            self.channels
+            self.channels,
+            self.position_ns
         )
     }
+}
+
+/// A timeline position as Python sees it.
+fn nanos(position: Duration) -> u64 {
+    u64::try_from(position.as_nanos()).unwrap_or(u64::MAX)
 }
 
 fn to_bytes(samples: &[i16]) -> Vec<u8> {
@@ -241,14 +251,18 @@ pub struct WakeDetected {
     word: String,
     #[pyo3(get)]
     score: f32,
+    /// Where the deciding frame ends, in nanoseconds on the timeline
+    /// that `AudioChunk.position_ns` uses.
+    #[pyo3(get)]
+    position_ns: u64,
 }
 
 #[pymethods]
 impl WakeDetected {
     fn __repr__(&self) -> String {
         format!(
-            "WakeDetected(word={:?}, score={:.3})",
-            self.word, self.score
+            "WakeDetected(word={:?}, score={:.3}, position_ns={})",
+            self.word, self.score, self.position_ns
         )
     }
 }
@@ -264,6 +278,10 @@ pub struct SpeechEnded {
     /// Seconds.
     #[pyo3(get)]
     duration: f64,
+    /// Where the first sample, pre-roll included, sits on the timeline
+    /// that `AudioChunk.position_ns` uses.
+    #[pyo3(get)]
+    position_ns: u64,
 }
 
 #[pymethods]
@@ -365,14 +383,31 @@ fn reason_name(reason: EndReason) -> String {
 /// is taken.
 fn event_to_py(py: Python<'_>, event: Event) -> PyResult<Py<PyAny>> {
     Ok(match event {
-        Event::WakeDetected { word, score } => {
-            Py::new(py, (WakeDetected { word, score }, AudioEvent))?.into_any()
+        Event::WakeDetected {
+            word,
+            score,
+            position,
+        } => {
+            let position_ns = nanos(position);
+            Py::new(
+                py,
+                (
+                    WakeDetected {
+                        word,
+                        score,
+                        position_ns,
+                    },
+                    AudioEvent,
+                ),
+            )?
+            .into_any()
         }
         Event::SpeechEnded {
             audio,
             sample_rate,
             reason,
             duration,
+            position,
         } => Py::new(
             py,
             (
@@ -381,6 +416,7 @@ fn event_to_py(py: Python<'_>, event: Event) -> PyResult<Py<PyAny>> {
                     sample_rate,
                     reason: reason_name(reason),
                     duration: duration.as_secs_f64(),
+                    position_ns: nanos(position),
                 },
                 AudioEvent,
             ),
@@ -496,6 +532,7 @@ impl EdgeEar {
             sample_rate: chunk.format.sample_rate,
             channels: chunk.format.channels,
             dropped_before: chunk.dropped_before,
+            position_ns: nanos(chunk.position),
         })
     }
 

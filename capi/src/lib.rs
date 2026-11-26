@@ -17,7 +17,7 @@ use edge_ear_core::Samples;
 use edge_ear_core::SoundSource;
 use edge_ear_core::config::{AudioFormat, SampleType, Target};
 
-use convert::{duration, optional_str, out_ptr, required_str};
+use convert::{duration, nanos, optional_str, out_ptr, required_str};
 use error::*;
 use events::{Registered, edge_ear_event_cb};
 use logging::{edge_ear_log_cb, edge_ear_log_level};
@@ -215,8 +215,10 @@ pub unsafe extern "C" fn edge_ear_is_running(ear: edge_ear_h) -> i32 {
 /// @param[in]  timeout_ms how long to wait; below zero waits until
 ///             audio arrives or capture stops
 /// @param[out] got how many samples were written
+/// @param[out] position_ns where the first sample sits on the capture
+///             timeline, in nanoseconds since capture started; may be NULL
 /// @return #EDGE_EAR_OK, or a negative #edge_ear_error.
-/// @see edge_ear_set_format
+/// @see edge_ear_set_format, edge_ear_event::position_ns
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn edge_ear_read(
     ear: edge_ear_h,
@@ -224,6 +226,7 @@ pub unsafe extern "C" fn edge_ear_read(
     cap: usize,
     timeout_ms: i32,
     got: *mut usize,
+    position_ns: *mut u64,
 ) -> i32 {
     with!(ear, e => {
         let got = ok_or_return!(out_ptr(got, "got"));
@@ -254,6 +257,10 @@ pub unsafe extern "C" fn edge_ear_read(
         // length was just checked against it.
         unsafe { std::ptr::copy_nonoverlapping(samples.as_ptr(), buf, samples.len()) };
         *got = samples.len();
+        // Safe: a non-null pointer is the caller's promise of room for one value.
+        if let Some(position) = unsafe { position_ns.as_mut() } {
+            *position = nanos(chunk.position);
+        }
         OK
     })
 }

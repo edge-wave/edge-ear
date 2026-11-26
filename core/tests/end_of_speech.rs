@@ -287,3 +287,47 @@ fn a_timeout_shortened_mid_recording_ends_the_open_recording() {
     assert_eq!(seen.lock().unwrap()[0].0, EndReason::NoSpeech);
     ear.stop().unwrap();
 }
+
+#[test]
+fn a_recording_says_where_on_the_timeline_its_pre_roll_starts() {
+    let ear = EdgeEar::with_backend(Box::new(FakeBackend::paced())).expect("handle");
+    let place = Arc::new(Mutex::new(None));
+    let sink = Arc::clone(&place);
+    ear.on_event(move |event| {
+        if let Event::SpeechEnded {
+            position, audio, ..
+        } = event
+        {
+            *sink.lock().unwrap() = Some((position, audio.len()));
+        }
+    })
+    .unwrap();
+    ear.set_pre_roll(Duration::from_millis(200)).unwrap();
+    ear.enable_speech().unwrap();
+    ear.start().unwrap();
+
+    // Let history fill well past the pre-roll, then reach back into it.
+    let first = ear.read(Some(Duration::from_secs(2))).unwrap();
+    thread::sleep(Duration::from_millis(600));
+    ear.start_recording().unwrap();
+    thread::sleep(Duration::from_millis(100));
+    ear.stop_recording().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while place.lock().unwrap().is_none() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    // The fake device catches up after a stall, so only a lower bound
+    // holds against the wall clock. The exact sums are unit tested.
+    let (position, samples) = place.lock().unwrap().expect("no ending arrived");
+    assert!(
+        position > first.position,
+        "the recording sits at {position:?}"
+    );
+    assert!(
+        position >= Duration::from_millis(300),
+        "the recording at {position:?} starts before the pre-roll could"
+    );
+    assert!(samples > 0, "the pre-roll was not collected");
+    ear.destroy();
+}
