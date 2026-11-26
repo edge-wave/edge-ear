@@ -89,11 +89,41 @@ impl Event {
             Event::EventsDropped { .. } => "events dropped",
         }
     }
+
+    /// Where a finished recording's last sample ends on the capture
+    /// timeline. Unlike `duration`, this counts the pre-roll too.
+    pub fn audio_end(&self) -> Option<Duration> {
+        match self {
+            Event::SpeechEnded {
+                audio,
+                sample_rate,
+                position,
+                ..
+            } => {
+                let nanos = audio.len() as u128 * 1_000_000_000 / (*sample_rate).max(1) as u128;
+                Some(*position + Duration::from_nanos(nanos as u64))
+            }
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_recording_ends_after_its_pre_roll_and_the_rest() {
+        let ended = Event::SpeechEnded {
+            audio: vec![0; 8_000],
+            sample_rate: 16_000,
+            reason: EndReason::Silence,
+            duration: Duration::from_millis(300),
+            position: Duration::from_secs(2),
+        };
+        assert_eq!(ended.audio_end(), Some(Duration::from_millis(2_500)));
+        assert_eq!(Event::EventsDropped { count: 1 }.audio_end(), None);
+    }
 
     const ALL: [EndReason; 4] = [
         EndReason::Silence,

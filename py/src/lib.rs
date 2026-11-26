@@ -282,6 +282,10 @@ pub struct SpeechEnded {
     /// that `AudioChunk.position_ns` uses.
     #[pyo3(get)]
     position_ns: u64,
+    /// Where the last sample ends on the same timeline. Unlike
+    /// `duration`, this counts the pre-roll too.
+    #[pyo3(get)]
+    end_ns: u64,
 }
 
 #[pymethods]
@@ -382,6 +386,7 @@ fn reason_name(reason: EndReason) -> String {
 /// delivers notifications, which is the only place the interpreter lock
 /// is taken.
 fn event_to_py(py: Python<'_>, event: Event) -> PyResult<Py<PyAny>> {
+    let end_ns = event.audio_end().map_or(0, nanos);
     Ok(match event {
         Event::WakeDetected {
             word,
@@ -417,6 +422,7 @@ fn event_to_py(py: Python<'_>, event: Event) -> PyResult<Py<PyAny>> {
                     reason: reason_name(reason),
                     duration: duration.as_secs_f64(),
                     position_ns: nanos(position),
+                    end_ns,
                 },
                 AudioEvent,
             ),

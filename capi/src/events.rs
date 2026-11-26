@@ -85,6 +85,9 @@ pub struct edge_ear_event {
     /// Wake detected: where the deciding frame ends. Speech ended: where
     /// the first sample of `audio` sits. Nanoseconds on the `edge_ear_read` timeline.
     pub position_ns: u64,
+    /// Speech ended: where the last sample of `audio` ends, pre-roll
+    /// counted, unlike `duration_secs`. Nanoseconds on the same timeline.
+    pub end_ns: u64,
 }
 
 /// Called for every notification. The event stops being valid when it
@@ -148,6 +151,7 @@ impl Registered {
                 reason: (*reason).into(),
                 duration_secs: duration.as_secs_f64(),
                 position_ns: crate::convert::nanos(*position),
+                end_ns: crate::convert::nanos(event.audio_end().unwrap_or_default()),
                 ..edge_ear_event::empty()
             },
             Event::SoundFinished { id } => {
@@ -201,6 +205,7 @@ impl edge_ear_event {
             dropped: 0,
             word: std::ptr::null(),
             position_ns: 0,
+            end_ns: 0,
         }
     }
 }

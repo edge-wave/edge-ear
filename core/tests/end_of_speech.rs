@@ -259,7 +259,8 @@ fn the_rules_weighed_frame_by_frame_can_be_changed_mid_recording() {
 /// timeout the open recording has run past, and it has to end on it.
 #[test]
 fn a_timeout_shortened_mid_recording_ends_the_open_recording() {
-    let ear = ear();
+    // At real speed, since lost audio now counts as time gone by.
+    let ear = EdgeEar::with_backend(Box::new(FakeBackend::paced())).expect("handle");
     let seen = endings(&ear);
     // Long enough that nothing ends on its own while this test sets up.
     ear.set_no_speech_timeout(Duration::from_secs(30)).unwrap();
